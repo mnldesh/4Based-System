@@ -292,11 +292,10 @@ def get_ai_reply(
                     {"role": "user",   "content": prompt},
                 ],
             )
-            raw  = resp.choices[0].message.content or ""
-            text = clean_reply(raw)
+            text = clean_reply(resp.choices[0].message.content or "")
             if text:
                 return text
-            print(f"  [AI] Leere Antwort (Versuch {attempt}/{AI_RETRIES}) | raw={raw[:80]!r}")
+            print(f"  [AI] Leere Antwort (Versuch {attempt}/{AI_RETRIES})")
         except openai.APIConnectionError as e:
             print(f"  [AI] Verbindung fehlgeschlagen (Versuch {attempt}/{AI_RETRIES}): {e}")
         except openai.APIStatusError as e:
