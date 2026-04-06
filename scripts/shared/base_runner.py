@@ -262,7 +262,7 @@ def get_ai_reply(
         "KALT":      "Weck Interesse, sei geheimnisvoll. Kein direkter Sales.",
         "KALT_HART": "Überrasche mit einer völlig unerwarteten Frage oder Aussage.",
         "AKTIV":     "Löse seinen Einwand, mach ein konkretes Angebot mit Gutschein.",
-        "KAEUFER":   f"Knüpf an seinen Kauf an, subtiler Upsell. Gutschein: {persona.get('voucher_pct',30)}%.",
+        "KAEUFER":   f"Schau dir den Verlauf an: Was hat er gekauft/geschrieben? Knüpf PERSÖNLICH daran an (z.B. 'Das letzte Set hat dir ja gefallen...'). Dann subtiler Upsell auf neuen Content. Gutschein: {persona.get('voucher_pct',30)}% falls passend.",
         "PREMIUM":   "VIP-Behandlung, exklusiv, persönlich, mach ihn zum Stammkunden.",
     }.get(user_type, "Antworte passend zum Kontext.")
 
