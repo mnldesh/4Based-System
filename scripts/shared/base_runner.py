@@ -453,14 +453,14 @@ async def send_message(page: Page, text: str) -> None:
 
 async def navigate_back(page: Page) -> None:
     try:
-        await page.click(SEL["nav"], timeout=4000)
+        # Direkte URL zuverlässiger als Nav-Klick
+        if "/messages" not in page.url:
+            await page.goto("https://4based.com/messages", wait_until="domcontentloaded")
+        else:
+            await page.go_back()
         await page.wait_for_timeout(1000)
     except Exception:
-        try:
-            await page.go_back()
-            await page.wait_for_timeout(1000)
-        except Exception:
-            pass
+        pass
 
 
 async def scroll_down(page: Page) -> None:
@@ -709,38 +709,21 @@ async def run_account(
                     locale        = "de-DE",
                 )
                 page = await ctx.new_page()
-                await page.goto("https://4based.com", wait_until="domcontentloaded")
+                # Direkt zur Messages-URL — zuverlässiger als Nav-Klick
+                await page.goto("https://4based.com/messages", wait_until="networkidle")
                 await page.wait_for_timeout(3000)
                 await dismiss_consent(page)
 
-                # Login prüfen — falls nicht eingeloggt → Session neu speichern
+                # Login prüfen
                 if "login" in page.url.lower() or await page.locator("input[type='email']").count():
                     raise RuntimeError("Session abgelaufen — bitte neu einloggen: python scripts/hilda_runner.py --save-session")
 
-                # Navigation zur Nachrichten-Ansicht mit mehreren Fallbacks
-                nav_selectors = [
-                    "text=Nachrichten",
-                    "ion-tab-button:has-text('Nachrichten')",
-                    "a[href*='/messages']",
-                    "ion-icon[name='chatbubbles']",
-                    "[aria-label='Nachrichten']",
-                ]
-                nav_ok = False
-                for sel in nav_selectors:
-                    try:
-                        loc = page.locator(sel)
-                        if await loc.count():
-                            await loc.first.click(timeout=5000)
-                            nav_ok = True
-                            break
-                    except Exception:
-                        continue
-                if not nav_ok:
-                    # Direkt zur Chat-URL navigieren
-                    await page.goto("https://4based.com/messages", wait_until="domcontentloaded")
-
-                await page.wait_for_timeout(2000)
-                await page.locator("chat-overview").wait_for(timeout=15000)
+                # Auf chat-overview warten — mit Fallback über JS-Scroll
+                try:
+                    await page.locator("chat-overview").wait_for(timeout=20000)
+                except Exception:
+                    # Falls Shadow DOM: prüfen ob ion-items schon da
+                    await page.wait_for_selector("chat-overview ion-item, ion-item.item", timeout=15000)
 
                 crash_delay = 20
 
