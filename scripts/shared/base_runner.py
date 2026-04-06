@@ -399,12 +399,12 @@ async def send_message(page: Page, text: str) -> None:
     handle = await ta.element_handle()
     if handle:
         await page.evaluate(
-            """(el, v) => {
+            """([el, v]) => {
                 try { el.value = v; } catch(e) {}
                 el.dispatchEvent(new Event('input',  { bubbles: true }));
                 el.dispatchEvent(new Event('change', { bubbles: true }));
             }""",
-            handle, text,
+            [handle, text],
         )
     else:
         await ta.click(timeout=1500)
