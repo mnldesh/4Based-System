@@ -1,19 +1,22 @@
 """
 hilda_planner.py — Content-Plan nur für Hilda erstellen
 
-Führt aus:
-  1. Content-Analyse (lokaler Ordner oder Google Drive)
-  2. Marketing-Recherche (DuckDuckGo)
+Datenquelle: immer Google Drive (drive_source_folder_id in config/orchestrator.json)
+
+Ablauf:
+  1. Google Drive scannen → Bilder/Videos analysieren
+  2. Marketing-Recherche (DuckDuckGo) — parallel zur Analyse
   3. Tagesplan für Hilda generieren
-  4. Plan speichern (lokal + optional Drive)
+  4. Plan lokal + in Drive speichern
 """
 
 import argparse
 import sys
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, Future
 
-ROOT       = Path(__file__).resolve().parent.parent
-SCRIPTS    = Path(__file__).resolve().parent
+ROOT    = Path(__file__).resolve().parent.parent
+SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 
 from shared.ai_client import make_client, ensure_ollama
@@ -27,21 +30,17 @@ from orchestrator import (
     ANALYSIS_DIR, PLANS_ROOT, RESEARCH_DIR, DOWNLOAD_DIR,
 )
 
-from concurrent.futures import ThreadPoolExecutor, Future
-
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Hilda — Content-Plan erstellen")
-    ap.add_argument("--skip-research", action="store_true", help="Keine neue Recherche")
-    ap.add_argument("--skip-drive",    action="store_true", help="Kein Google Drive")
-    ap.add_argument("--dry-run",       action="store_true", help="Nicht hochladen")
+    ap = argparse.ArgumentParser(description="Hilda — Content-Plan aus Google Drive erstellen")
+    ap.add_argument("--skip-research", action="store_true", help="Keine neue Recherche (letzte nutzen)")
+    ap.add_argument("--dry-run",       action="store_true", help="Plan nicht in Drive hochladen")
     args = ap.parse_args()
 
-    use_drive = not args.skip_drive and not args.dry_run
-
     print(f"\n[HILDA PLANNER] Start")
-    print(f"  Drive    : {'JA' if use_drive else 'NEIN'}")
-    print(f"  Recherche: {'NEIN' if args.skip_research else 'JA'}")
+    print(f"  Datenquelle: Google Drive")
+    print(f"  Recherche  : {'NEIN (letzte)' if args.skip_research else 'JA'}")
+    print(f"  Drive-Upload: {'NEIN' if args.dry_run else 'JA'}")
 
     for d in [ANALYSIS_DIR, PLANS_ROOT, RESEARCH_DIR, DOWNLOAD_DIR / "media"]:
         d.mkdir(parents=True, exist_ok=True)
@@ -50,17 +49,17 @@ def main() -> None:
     cfg    = load_config()
     client = make_client()
 
-    # Research + Analyse parallel
+    # Research parallel zur Analyse starten
     _ex: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1)
     research_future: Future = _ex.submit(step_research, cfg, args.skip_research)
 
-    analysis = step_scan_and_analyze(cfg, use_drive, client)
+    analysis = step_scan_and_analyze(cfg, use_drive=True, client=client)
     insights = research_future.result()
     _ex.shutdown(wait=False)
 
     plans = step_plan(analysis, insights, cfg, ["hilda"], client)
 
-    if use_drive:
+    if not args.dry_run:
         step_upload_plans(plans, cfg)
 
     print_summary(analysis, plans)
