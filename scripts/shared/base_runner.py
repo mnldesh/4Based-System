@@ -292,12 +292,13 @@ def get_ai_reply(
                     {"role": "system", "content": persona["system"]},
                     {"role": "user",   "content": prompt},
                 ],
-                extra_body = {"think": False},   # qwen3: Thinking deaktivieren
+                extra_body = {"options": {"think": False}},   # qwen3: Thinking deaktivieren
             )
-            text = clean_reply(resp.choices[0].message.content)
+            raw  = resp.choices[0].message.content or ""
+            text = clean_reply(raw)
             if text:
                 return text
-            print(f"  [AI] Leere Antwort (Versuch {attempt}/{AI_RETRIES})")
+            print(f"  [AI] Leere Antwort (Versuch {attempt}/{AI_RETRIES}) | raw={raw[:80]!r}")
         except openai.APIConnectionError as e:
             print(f"  [AI] Verbindung fehlgeschlagen (Versuch {attempt}/{AI_RETRIES}): {e}")
         except openai.APIStatusError as e:
