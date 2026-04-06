@@ -161,8 +161,43 @@ def load_account(name: str, state_file: str) -> Account:
     cfg        = load_json(ROOT / "config" / f"{name}.json", {})
     state_path = ROOT / "state" / state_file
     if not state_path.exists():
-        raise SystemExit(f"[ERROR] Storage-State fehlt: {state_path}")
+        raise SystemExit(
+            f"[ERROR] Storage-State fehlt: {state_path}\n"
+            f"  → Einmalig einloggen mit: python scripts/{name}_runner.py --save-session"
+        )
     return Account(name=name, storage_state=state_path, config=cfg)
+
+
+async def save_session(name: str, state_file: str) -> None:
+    """
+    Öffnet einen sichtbaren Browser auf 4based.com.
+    Nach manuellem Login ENTER drücken → Session wird in state/ gespeichert.
+    """
+    from playwright.async_api import async_playwright
+
+    state_path = ROOT / "state" / state_file
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+
+    print(f"\n[{name.upper()}] Session-Setup")
+    print("  Browser öffnet sich — bitte manuell einloggen.")
+    print("  Danach ENTER drücken um Session zu speichern.\n")
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=False)
+        ctx     = await browser.new_context(locale="de-DE")
+        page    = await ctx.new_page()
+        await page.goto("https://4based.com", wait_until="domcontentloaded")
+
+        # Warten bis User fertig ist
+        await asyncio.get_event_loop().run_in_executor(
+            None, input, "  Nach dem Login ENTER drücken..."
+        )
+
+        await ctx.storage_state(path=str(state_path))
+        await browser.close()
+
+    print(f"\n[{name.upper()}] Session gespeichert: {state_path}")
+    print(f"  Jetzt starten mit: python scripts/{name}_runner.py")
 
 # ─── Persistente User-States ─────────────────────────────────────────────────
 

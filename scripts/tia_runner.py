@@ -5,16 +5,25 @@ tia_runner.py — Tia Runner
 import argparse
 import asyncio
 import signal
+import sys
+from pathlib import Path
 
-from shared.base_runner import load_account, run_account
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from shared.base_runner import load_account, run_account, save_session
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Tia — 4Based Runner")
-    ap.add_argument("--dry-run",  action="store_true", help="Keine Nachrichten senden")
-    ap.add_argument("--once",     action="store_true", help="Nur einen Zyklus")
-    ap.add_argument("--headless", action="store_true", help="Browser unsichtbar (Server-Modus)")
-    args    = ap.parse_args()
+    ap.add_argument("--dry-run",      action="store_true", help="Keine Nachrichten senden")
+    ap.add_argument("--once",         action="store_true", help="Nur einen Zyklus")
+    ap.add_argument("--headless",     action="store_true", help="Browser unsichtbar (Server-Modus)")
+    ap.add_argument("--save-session", action="store_true", help="Einmalig einloggen und Session speichern")
+    args = ap.parse_args()
+
+    if args.save_session:
+        asyncio.run(save_session("tia", "tia.storage.json"))
+        return
+
     account = load_account("tia", "tia.storage.json")
 
     stop_event = asyncio.Event()

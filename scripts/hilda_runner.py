@@ -5,19 +5,27 @@ hilda_runner.py — Hilda Valentine Runner
 import argparse
 import asyncio
 import signal
+import sys
+from pathlib import Path
 
-from shared.base_runner import load_account, run_account
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from shared.base_runner import load_account, run_account, save_session
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Hilda Valentine — 4Based Runner")
-    ap.add_argument("--dry-run",  action="store_true", help="Keine Nachrichten senden")
-    ap.add_argument("--once",     action="store_true", help="Nur einen Zyklus")
-    ap.add_argument("--headless", action="store_true", help="Browser unsichtbar (Server-Modus)")
-    args    = ap.parse_args()
+    ap.add_argument("--dry-run",      action="store_true", help="Keine Nachrichten senden")
+    ap.add_argument("--once",         action="store_true", help="Nur einen Zyklus")
+    ap.add_argument("--headless",     action="store_true", help="Browser unsichtbar (Server-Modus)")
+    ap.add_argument("--save-session", action="store_true", help="Einmalig einloggen und Session speichern")
+    args = ap.parse_args()
+
+    if args.save_session:
+        asyncio.run(save_session("hilda", "hilda.storage.json"))
+        return
+
     account = load_account("hilda", "hilda.storage.json")
 
-    # Shutdown-Flag für graceful exit
     stop_event = asyncio.Event()
 
     def shutdown(*_):
@@ -31,7 +39,6 @@ def main() -> None:
         task = asyncio.create_task(
             run_account(account, args.dry_run, args.once, headless=args.headless)
         )
-        # Warte auf Task oder Shutdown-Signal
         done, _ = await asyncio.wait(
             [task, asyncio.create_task(stop_event.wait())],
             return_when=asyncio.FIRST_COMPLETED,
