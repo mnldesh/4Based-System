@@ -309,18 +309,24 @@ def get_ai_reply(
 
     for attempt in range(1, AI_RETRIES + 1):
         try:
-            resp = client.chat.completions.create(
-                model      = model,
-                max_tokens = 600,
-                messages   = [
-                    {"role": "system", "content": persona["system"]},
-                    {"role": "user",   "content": prompt},
-                ],
+            loop = asyncio.get_event_loop()
+            resp = await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: client.chat.completions.create(
+                    model      = model,
+                    max_tokens = 600,
+                    messages   = [
+                        {"role": "system", "content": persona["system"]},
+                        {"role": "user",   "content": prompt},
+                    ],
+                )),
+                timeout=45,  # max 45s pro Versuch
             )
             text = clean_reply(resp.choices[0].message.content or "")
             if text:
                 return text
             print(f"  [AI] Leere Antwort (Versuch {attempt}/{AI_RETRIES})")
+        except asyncio.TimeoutError:
+            print(f"  [AI] Timeout nach 45s (Versuch {attempt}/{AI_RETRIES})")
         except openai.APIConnectionError as e:
             print(f"  [AI] Verbindung fehlgeschlagen (Versuch {attempt}/{AI_RETRIES}): {e}")
         except openai.APIStatusError as e:
