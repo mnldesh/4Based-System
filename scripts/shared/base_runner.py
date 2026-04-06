@@ -14,6 +14,7 @@ import json
 import random
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,7 @@ DEFAULT_HISTORY_LIMIT = 20
 SNAPSHOT_SIZE         = 30   # Top-N Chats im periodischen Check
 CHECK_MIN             = 300  # 5 min in Sekunden
 CHECK_MAX             = 480  # 8 min in Sekunden
+AI_RETRIES            = 3    # Versuche bevor Fallback-Nachricht
 
 # ─── Selectors ────────────────────────────────────────────────────────────────
 
@@ -207,7 +209,11 @@ def get_ai_reply(
     client:       openai.OpenAI,
     user_states:  dict,
     model:        str = TEXT_MODEL,
-) -> Optional[str]:
+) -> str:
+    """
+    Generiert immer eine Antwort. Retry bis AI_RETRIES mal.
+    Wenn alle Versuche fehlschlagen → Persona-Fallback-Nachricht (kein Skip).
+    """
     persona   = PERSONAS[account_name]
     user_type = get_or_classify(username, history, revenue, user_states)
     trailing  = trailing_own(history)
@@ -224,24 +230,34 @@ def get_ai_reply(
         f"Nur die nächste Nachricht als {persona['name']}:"
     )
 
-    try:
-        resp = client.chat.completions.create(
-            model      = model,
-            max_tokens = 120,
-            messages   = [
-                {"role": "system", "content": persona["system"]},
-                {"role": "user",   "content": prompt},
-            ],
-        )
-        raw = resp.choices[0].message.content
-        return clean_reply(raw) or None
-    except openai.APIConnectionError as e:
-        print(f"  [AI] Verbindungsfehler: {e}")
-    except openai.APIStatusError as e:
-        print(f"  [AI] API Fehler {e.status_code}: {e.message}")
-    except Exception as e:
-        print(f"  [AI] Fehler: {e}")
-    return None
+    for attempt in range(1, AI_RETRIES + 1):
+        try:
+            resp = client.chat.completions.create(
+                model      = model,
+                max_tokens = 120,
+                messages   = [
+                    {"role": "system", "content": persona["system"]},
+                    {"role": "user",   "content": prompt},
+                ],
+            )
+            text = clean_reply(resp.choices[0].message.content)
+            if text:
+                return text
+            print(f"  [AI] Leere Antwort (Versuch {attempt}/{AI_RETRIES})")
+        except openai.APIConnectionError as e:
+            print(f"  [AI] Verbindung fehlgeschlagen (Versuch {attempt}/{AI_RETRIES}): {e}")
+        except openai.APIStatusError as e:
+            print(f"  [AI] API Fehler {e.status_code} (Versuch {attempt}/{AI_RETRIES})")
+        except Exception as e:
+            print(f"  [AI] Fehler (Versuch {attempt}/{AI_RETRIES}): {e}")
+
+        if attempt < AI_RETRIES:
+            time.sleep(2 ** attempt)   # 2s, 4s
+
+    # Alle Versuche fehlgeschlagen → Fallback, nie überspringen
+    fallback = persona.get("fallback_msg", "Hey, meld dich 🙂")
+    print(f"  [AI] Fallback nach {AI_RETRIES} Versuchen")
+    return fallback
 
 # ─── Playwright helpers ───────────────────────────────────────────────────────
 
@@ -420,11 +436,18 @@ async def read_snapshot(page: Page) -> dict[str, str]:
     return snapshot
 
 
-async def find_next_unprocessed(page: Page, processed: set[str]) -> Optional[ChatItem]:
+async def find_next_unprocessed(
+    page:          Page,
+    processed:     set[str],
+    last_previews: dict[str, str],
+) -> Optional[ChatItem]:
     """
     Scannt die Inbox von oben nach unten.
-    Gibt den ersten noch nicht bearbeiteten Chat zurück.
-    Scrollt nach unten wenn alle sichtbaren bereits bearbeitet sind.
+    Gibt zurück:
+      - Ersten Chat der noch nicht in processed ist, ODER
+      - Einen bereits bearbeiteten Chat wenn sein Preview sich geändert hat
+        (User hat geantwortet → sofort nochmal bearbeiten)
+    Scrollt nach unten wenn nötig.
     """
     no_progress = 0
     prev_count  = 0
@@ -434,8 +457,15 @@ async def find_next_unprocessed(page: Page, processed: set[str]) -> Optional[Cha
 
         for i in range(count):
             username = await _read_username_fast(page, i)
-            if username and username not in processed:
+            if not username:
+                continue
+            if username not in processed:
                 return await read_item(page, i)
+            # Schon bearbeitet — hat der User inzwischen geantwortet?
+            chat = await read_item(page, i)
+            if chat and chat.preview != last_previews.get(username, ""):
+                print(f"  [NEU] {username} hat geantwortet → sofort bearbeiten")
+                return chat
 
         if count <= prev_count:
             no_progress += 1
@@ -539,12 +569,7 @@ async def process_chat(
         await navigate_back(page)
         return False
 
-    reply = get_ai_reply(history, item.username, account.name, item.revenue, client, user_states)
-    if not reply:
-        print("  [SKIP] Kein AI-Reply")
-        await navigate_back(page)
-        return False
-
+    reply     = get_ai_reply(history, item.username, account.name, item.revenue, client, user_states)
     user_type = user_states.get(item.username, {}).get("type", "?")
     prefix    = "[DRY] " if dry_run else ""
     print(f"  {user_type} | {prefix}{reply[:90]}")
@@ -611,6 +636,7 @@ async def run_account(
                     pass_num += 1
                     sent = skip = 0
                     processed_this_pass: set[str] = set()
+                    last_previews:       dict[str, str] = {}   # Preview beim letzten Besuch
 
                     print(f"\n[{account.name.upper()}] PASS {pass_num} | {now_utc().strftime('%H:%M:%S')}")
 
@@ -627,7 +653,7 @@ async def run_account(
                             next_check = now + random.randint(CHECK_MIN, CHECK_MAX)
                             print(f"[{account.name.upper()}] ── Weiter ──\n")
 
-                        chat = await find_next_unprocessed(page, processed_this_pass)
+                        chat = await find_next_unprocessed(page, processed_this_pass, last_previews)
                         if not chat:
                             break   # Ende der Inbox
 
@@ -639,6 +665,7 @@ async def run_account(
                         ok    = await process_chat(page, chat, account, client, dry_run, user_states, limit)
 
                         processed_this_pass.add(chat.username)
+                        last_previews[chat.username] = chat.preview   # für Change-Detection merken
                         snapshot[chat.username] = chat.preview
                         if ok:  sent += 1
                         else:   skip += 1

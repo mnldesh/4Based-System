@@ -26,6 +26,7 @@ PERSONAS: dict[str, dict] = {
             "Caption-Stil: kurz, provokant, mit Emoji. "
             "Hashtag-Stil: nischig, nicht generisch."
         ),
+        "fallback_msg": "Hey du 😈 was geht ab?",
         "mass_msg": {
             "buyer": (
                 "Du schreibst Hilda-typische Massennachrichten an KÄUFER. "
@@ -62,6 +63,7 @@ PERSONAS: dict[str, dict] = {
             "Caption-Stil: storytelling, Emojis, Fragen ans Publikum. "
             "Hashtag-Stil: lifestyle, cute, trending."
         ),
+        "fallback_msg": "Heyy, bin grad kurz weg 🌸 meld dich!",
         "mass_msg": {
             "buyer": (
                 "Du schreibst Tia-typische Massennachrichten an KÄUFER. "
