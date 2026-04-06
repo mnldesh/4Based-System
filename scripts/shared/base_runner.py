@@ -696,6 +696,21 @@ async def run_account(
 
                 crash_delay = 20
 
+                # Fortschritt laden (falls Absturz/Neustart mitten im Pass)
+                progress_file = ROOT / "state" / f"{account.name}_progress.json"
+                def _load_progress() -> set[str]:
+                    data = load_json(progress_file, [])
+                    if data:
+                        print(f"[{account.name.upper()}] Fortschritt geladen: {len(data)} bereits bearbeitet → weiter")
+                    return set(data)
+
+                def _save_progress(processed: set[str]) -> None:
+                    progress_file.write_text(json.dumps(list(processed)), encoding="utf-8")
+
+                def _clear_progress() -> None:
+                    if progress_file.exists():
+                        progress_file.unlink()
+
                 # Einmaliger Snapshot der Top-30 als Baseline
                 snapshot   = await read_snapshot(page)
                 next_check = asyncio.get_event_loop().time() + random.randint(CHECK_MIN, CHECK_MAX)
@@ -706,8 +721,8 @@ async def run_account(
                 while True:
                     pass_num += 1
                     sent = skip = 0
-                    processed_this_pass: set[str] = set()
-                    last_previews:       dict[str, str] = {}   # Preview beim letzten Besuch
+                    processed_this_pass: set[str] = _load_progress()
+                    last_previews:       dict[str, str] = {}
 
                     print(f"\n[{account.name.upper()}] PASS {pass_num} | {now_utc().strftime('%H:%M:%S')}")
 
@@ -736,12 +751,14 @@ async def run_account(
                         ok    = await process_chat(page, chat, account, client, dry_run, user_states, limit)
 
                         processed_this_pass.add(chat.username)
-                        last_previews[chat.username] = chat.preview   # für Change-Detection merken
+                        _save_progress(processed_this_pass)   # sofort persistieren
+                        last_previews[chat.username] = chat.preview
                         snapshot[chat.username] = chat.preview
                         if ok:  sent += 1
                         else:   skip += 1
 
-                    # Pass abgeschlossen
+                    # Pass abgeschlossen — Fortschritt löschen
+                    _clear_progress()
                     save_user_states(account.name, user_states)
                     print(
                         f"\n[{account.name.upper()}] Pass {pass_num} fertig | "
