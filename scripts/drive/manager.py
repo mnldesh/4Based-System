@@ -228,14 +228,15 @@ def _collect_all_media(folder_id: str, service, depth: int = 0) -> list[dict]:
 def iter_drive_media(folder_id: str) -> Generator[tuple[dict, Path], None, None]:
     """
     Iterator: Scannt Ordner + Unterordner rekursiv, lädt jede Mediendatei
-    in ein Temp-Verzeichnis, gibt (file_meta, temp_path) zurück.
+    in ein projektinternes Temp-Verzeichnis, gibt (file_meta, temp_path) zurück.
     """
     service = _get_service()
     print("[DRIVE] Scanne Ordner rekursiv...")
     files   = _collect_all_media(folder_id, service)
     print(f"[DRIVE] {len(files)} Mediendateien gesamt gefunden")
 
-    tmpdir = Path(tempfile.mkdtemp())
+    tmpdir = DOWNLOAD_DIR / "tmp"
+    tmpdir.mkdir(parents=True, exist_ok=True)
     try:
         for f in files:
             local_path = tmpdir / f["name"]
