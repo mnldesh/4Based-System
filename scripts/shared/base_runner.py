@@ -256,26 +256,43 @@ def get_ai_reply(
     user_msgs = [m.text for m in history if m.role == "user"]
     last_own  = [m.text for m in history if m.role == "me"][-3:]
 
+    # Strategie je nach User-Typ
+    strategy = {
+        "NEU":       "Sei neugierig, stell eine persönliche Frage. Kein Sales.",
+        "KALT":      "Weck Interesse, sei geheimnisvoll. Kein direkter Sales.",
+        "KALT_HART": "Überrasche mit einer völlig unerwarteten Frage oder Aussage.",
+        "AKTIV":     "Löse seinen Einwand, mach ein konkretes Angebot mit Gutschein.",
+        "KAEUFER":   f"Knüpf an seinen Kauf an, subtiler Upsell. Gutschein: {persona.get('voucher_pct',30)}%.",
+        "PREMIUM":   "VIP-Behandlung, exklusiv, persönlich, mach ihn zum Stammkunden.",
+    }.get(user_type, "Antworte passend zum Kontext.")
+
+    last_user_msg = user_msgs[-1] if user_msgs else "(keine)"
+    last_own_str  = " | ".join(last_own) if last_own else "keine"
+
     prompt = (
-        f"Username: {username}\n"
-        f"Typ: {user_type} | Rev: ${revenue:.0f} | OhneAntwort: {trailing}\n"
-        f"Letzte user msg: {user_msgs[-1] if user_msgs else 'keine'}\n"
-        f"Unsere letzten (nicht wiederholen): {' | '.join(last_own) if last_own else 'keine'}\n\n"
-        f"Verlauf:\n{format_history(history)}\n\n"
-        f"Nur die nächste Nachricht als {persona['name']}:"
+        f"/no_think\n\n"
+        f"SITUATION:\n"
+        f"- User: {username} | Typ: {user_type} | Umsatz: ${revenue:.0f} | "
+        f"Unbeantwortet seit: {trailing} Nachrichten\n"
+        f"- Strategie: {strategy}\n"
+        f"- Letzte User-Nachricht: {last_user_msg}\n"
+        f"- Deine letzten Nachrichten (NICHT wiederholen): {last_own_str}\n\n"
+        f"CHATVERLAUF:\n{format_history(history)}\n\n"
+        f"AUFGABE: Schreib die nächste Nachricht von {persona['name']}.\n"
+        f"REGELN: Nur 1-2 Sätze. Kein Präfix wie 'Hilda:'. Kein Markdown. "
+        f"Direkt die Nachricht, sonst nichts."
     )
 
     for attempt in range(1, AI_RETRIES + 1):
         try:
             resp = client.chat.completions.create(
                 model      = model,
-                max_tokens = 300,
+                max_tokens = 150,
                 messages   = [
                     {"role": "system", "content": persona["system"]},
                     {"role": "user",   "content": prompt},
                 ],
-                # qwen3:14b: Thinking für kurze Chat-Antworten deaktivieren
-                extra_body = {"think": False},
+                extra_body = {"think": False},   # qwen3: Thinking deaktivieren
             )
             text = clean_reply(resp.choices[0].message.content)
             if text:
