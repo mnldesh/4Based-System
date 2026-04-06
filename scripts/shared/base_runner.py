@@ -269,11 +269,13 @@ def get_ai_reply(
         try:
             resp = client.chat.completions.create(
                 model      = model,
-                max_tokens = 120,
+                max_tokens = 300,
                 messages   = [
                     {"role": "system", "content": persona["system"]},
                     {"role": "user",   "content": prompt},
                 ],
+                # qwen3:14b: Thinking für kurze Chat-Antworten deaktivieren
+                extra_body = {"think": False},
             )
             text = clean_reply(resp.choices[0].message.content)
             if text:
