@@ -616,7 +616,7 @@ async def process_chat(
         return False
 
     trailing = trailing_own(history)
-    if trailing >= MAX_TRAILING:
+    if trailing > MAX_TRAILING:
         print(f"  [SKIP] {trailing}x hintereinander ohne Antwort")
         log_event({"kind": "skip", "account": account.name,
                    "username": item.username, "trailing": trailing})
