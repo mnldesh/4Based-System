@@ -13,7 +13,7 @@ Ablauf:
 import argparse
 import sys
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, Future
+from concurrent.futures import ThreadPoolExecutor
 
 ROOT    = Path(__file__).resolve().parent.parent
 SCRIPTS = Path(__file__).resolve().parent
@@ -50,18 +50,15 @@ def main() -> None:
     client = make_client()
 
     # Research parallel zur Analyse starten
-    _ex: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1)
-    research_future: Future = _ex.submit(step_research, cfg, args.skip_research)
+    _ex = ThreadPoolExecutor(max_workers=1)
+    research_future = _ex.submit(step_research, cfg, args.skip_research)
 
     analysis = step_scan_and_analyze(cfg, use_drive=True, client=client, persona_name="hilda")
     insights = research_future.result()
-    _ex.shutdown(wait=False)
+    _ex.shutdown(wait=True)
 
     plans = step_plan(analysis, insights, cfg, ["hilda"], client)
-
-    if not args.dry_run:
-        step_upload_plans(plans, cfg)
-
+    step_upload_plans(plans, cfg, use_drive=not args.dry_run)
     print_summary(plans, analysis)
 
 
