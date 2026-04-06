@@ -108,16 +108,24 @@ def _analyze_one(path: Path, client, min_score: int, results: list[ContentScore]
         print("fehlgeschlagen")
 
 
-def step_scan_and_analyze(cfg: dict, use_drive: bool, client=None) -> list[ContentScore]:
+def step_scan_and_analyze(
+    cfg: dict,
+    use_drive: bool,
+    client=None,
+    persona_name: str = "",
+    folder_id_override: str = "",
+) -> list[ContentScore]:
     today    = datetime.now().strftime("%Y-%m-%d")
-    out_file = ANALYSIS_DIR / f"analysis_{today}.json"
+    suffix   = f"_{persona_name}" if persona_name else ""
+    out_file = ANALYSIS_DIR / f"analysis{suffix}_{today}.json"
 
     if out_file.exists():
         print(f"[STEP 1+2] Analyse von heute vorhanden: {out_file.name}")
         return load_analysis(out_file)
 
     def _load_last() -> list[ContentScore]:
-        existing = sorted(ANALYSIS_DIR.glob("analysis_*.json"), reverse=True)
+        pattern  = f"analysis{suffix}_*.json"
+        existing = sorted(ANALYSIS_DIR.glob(pattern), reverse=True)
         if existing:
             print(f"[STEP 1+2] Lade letzte Analyse: {existing[0].name}")
             return load_analysis(existing[0])
@@ -137,11 +145,16 @@ def step_scan_and_analyze(cfg: dict, use_drive: bool, client=None) -> list[Conte
         for f in files:
             _analyze_one(f, client, min_score, results)
     else:
-        folder_id = cfg.get("drive_source_folder_id", "")
+        # Reihenfolge: expliziter Override → persona-spezifisch → generisch
+        folder_id = (
+            folder_id_override
+            or (cfg.get(f"drive_source_folder_{persona_name}") if persona_name else "")
+            or cfg.get("drive_source_folder_id", "")
+        )
         if not folder_id:
-            print("[STEP 1+2] drive_source_folder_id fehlt → lokaler Fallback")
+            print(f"[STEP 1+2] Kein Drive-Ordner für '{persona_name}' → lokaler Fallback")
             return _load_last()
-        print("[STEP 1+2] Drive scannen (Download→Analyse→Löschen pro Datei)...")
+        print(f"[STEP 1+2] Drive scannen (Ordner: {folder_id[:20]}...)...")
         try:
             for _, tmp_path in iter_drive_media(folder_id):
                 _analyze_one(tmp_path, client, min_score, results)

@@ -53,7 +53,7 @@ def main() -> None:
     _ex: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1)
     research_future: Future = _ex.submit(step_research, cfg, args.skip_research)
 
-    analysis = step_scan_and_analyze(cfg, use_drive=True, client=client)
+    analysis = step_scan_and_analyze(cfg, use_drive=True, client=client, persona_name="hilda")
     insights = research_future.result()
     _ex.shutdown(wait=False)
 
