@@ -270,7 +270,6 @@ def get_ai_reply(
     last_own_str  = " | ".join(last_own) if last_own else "keine"
 
     prompt = (
-        f"/no_think\n\n"
         f"SITUATION:\n"
         f"- User: {username} | Typ: {user_type} | Umsatz: ${revenue:.0f} | "
         f"Unbeantwortet seit: {trailing} Nachrichten\n"
@@ -287,12 +286,11 @@ def get_ai_reply(
         try:
             resp = client.chat.completions.create(
                 model      = model,
-                max_tokens = 150,
+                max_tokens = 600,
                 messages   = [
                     {"role": "system", "content": persona["system"]},
                     {"role": "user",   "content": prompt},
                 ],
-                extra_body = {"options": {"think": False}},   # qwen3: Thinking deaktivieren
             )
             raw  = resp.choices[0].message.content or ""
             text = clean_reply(raw)
