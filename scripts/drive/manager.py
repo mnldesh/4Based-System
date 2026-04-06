@@ -196,17 +196,44 @@ def list_folder_files(folder_id: str, mime_filter: Optional[list[str]] = None) -
 
 # ─── High-level workflows ─────────────────────────────────────────────────────
 
+def _collect_all_media(folder_id: str, service, depth: int = 0) -> list[dict]:
+    """Rekursiv alle Mediendateien aus Ordner + Unterordnern sammeln."""
+    files  = []
+    indent = "  " * depth
+
+    # Unterordner finden
+    folder_q = (
+        f"'{folder_id}' in parents and trashed=false "
+        "and mimeType='application/vnd.google-apps.folder'"
+    )
+    subfolders = service.files().list(q=folder_q, fields="files(id, name)").execute()
+    for sub in subfolders.get("files", []):
+        print(f"[DRIVE]{indent} Unterordner: {sub['name']}")
+        files += _collect_all_media(sub["id"], service, depth + 1)
+
+    # Mediendateien in diesem Ordner
+    mime_q  = " or ".join(f"mimeType='{m}'" for m in IMAGE_MIMES + VIDEO_MIMES)
+    media_q = f"'{folder_id}' in parents and trashed=false and ({mime_q})"
+    result  = service.files().list(
+        q      = media_q,
+        fields = "files(id, name, mimeType, size, modifiedTime)",
+    ).execute()
+    found = result.get("files", [])
+    if found:
+        print(f"[DRIVE]{indent} {len(found)} Dateien")
+    files += found
+    return files
+
+
 def iter_drive_media(folder_id: str) -> Generator[tuple[dict, Path], None, None]:
     """
-    Iterator: Lädt jede Mediendatei aus Drive einzeln in ein Temp-Verzeichnis,
-    gibt (file_meta, temp_path) zurück und löscht die Temp-Datei danach.
-
-    Verwendung:
-        for meta, path in iter_drive_media(folder_id):
-            result = analyze(path)   # path wird danach automatisch gelöscht
+    Iterator: Scannt Ordner + Unterordner rekursiv, lädt jede Mediendatei
+    in ein Temp-Verzeichnis, gibt (file_meta, temp_path) zurück.
     """
-    files  = list_folder_files(folder_id, IMAGE_MIMES + VIDEO_MIMES)
-    print(f"[DRIVE] {len(files)} Mediendateien in Drive gefunden")
+    service = _get_service()
+    print("[DRIVE] Scanne Ordner rekursiv...")
+    files   = _collect_all_media(folder_id, service)
+    print(f"[DRIVE] {len(files)} Mediendateien gesamt gefunden")
 
     tmpdir = Path(tempfile.mkdtemp())
     try:
