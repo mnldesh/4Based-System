@@ -572,6 +572,8 @@ async def do_periodic_check(
 
 # ─── Core: Chat verarbeiten ───────────────────────────────────────────────────
 
+COOLDOWN_HOURS = 5   # Nicht wieder schreiben wenn letzte Nachricht < 5h
+
 async def process_chat(
     page:        Page,
     item:        ChatItem,
@@ -581,6 +583,19 @@ async def process_chat(
     user_states: dict,
     hist_limit:  int = DEFAULT_HISTORY_LIMIT,
 ) -> bool:
+    # Cooldown-Check: letzte eigene Nachricht < 5h → überspringen
+    last_sent = user_states.get(item.username, {}).get("last_sent_at")
+    if last_sent:
+        from datetime import timezone
+        try:
+            delta = now_utc() - datetime.fromisoformat(last_sent).replace(tzinfo=timezone.utc)
+            if delta.total_seconds() < COOLDOWN_HOURS * 3600:
+                remaining = int((COOLDOWN_HOURS * 3600 - delta.total_seconds()) / 60)
+                print(f"  [SKIP] Kürzlich geschrieben ({int(delta.total_seconds()/60)}min ago, noch {remaining}min)")
+                return False
+        except (ValueError, TypeError):
+            pass
+
     items   = page.locator(SEL["items"])
     count   = await items.count()
     clicked = False
@@ -629,6 +644,10 @@ async def process_chat(
         try:
             await send_message(page, reply)
             log_event({"kind": "sent", "account": account.name, "username": item.username})
+            # Sendezeitpunkt merken → in nächsten Pässen überspringen
+            if item.username not in user_states:
+                user_states[item.username] = {}
+            user_states[item.username]["last_sent_at"] = now_utc().isoformat()
             await asyncio.sleep(2)
         except Exception as e:
             print(f"  [SEND ERROR] {e}")
