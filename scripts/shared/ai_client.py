@@ -23,7 +23,7 @@ import openai
 OLLAMA_BASE     = "http://127.0.0.1:11434/v1"
 OLLAMA_HEALTH   = "http://127.0.0.1:11434/api/tags"
 TEXT_MODEL      = "qwen3:14b"
-VISION_MODEL    = "llava:13b"
+VISION_MODEL    = "llava:7b"
 API_TIMEOUT     = 180   # qwen3:14b braucht bei Queue länger
 MAX_RETRIES     = 3
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
