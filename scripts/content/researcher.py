@@ -26,14 +26,27 @@ ROOT = Path(__file__).resolve().parents[2]
 # ─── Search queries ───────────────────────────────────────────────────────────
 
 BASE_QUERIES = [
+    # Engagement & Wachstum
     "OnlyFans marketing strategies {year}",
     "content creator fan engagement tips {year}",
     "subscription platform growth tactics {year}",
     "how to increase OnlyFans subscribers {year}",
+    # Posting & Messaging
     "best posting times adult content creators {year}",
     "mass message strategy OnlyFans {year}",
     "content creator caption ideas that convert {year}",
     "fan retention strategies subscription platform {year}",
+    # PPV & Monetarisierung
+    "adult content creator ppv pricing strategy {year}",
+    "OnlyFans pay per view best practices tips {year}",
+    "how to upsell fans on subscription platform {year}",
+    "content creator exclusive content monetization {year}",
+    # DM & Conversion
+    "content creator DM conversion tips fans {year}",
+    "how to convert free fans to paying subscribers {year}",
+    # Retention & Win-Back
+    "subscriber win-back campaign content creator {year}",
+    "creator churn reduction fan retention strategies {year}",
 ]
 
 DDG_DELAY     = 2.0   # Sekunden Basisverzögerung pro Thread
@@ -58,6 +71,9 @@ class MarketingInsights:
     hilda_strategy: str
     tia_strategy:   str
     top_tips:       list[str]
+    ppv_strategy:   str   # Wann PPV einsetzen, wie bepreisen
+    dm_strategy:    str   # DM-Konversions-Taktiken
+    retention_tips: str   # Fans halten, Churn reduzieren
 
 # ─── Search ───────────────────────────────────────────────────────────────────
 
@@ -128,6 +144,21 @@ Antworte auf Deutsch, max 300 Wörter, als konkreter Aktionsplan."""
 TIPS_SYSTEM = """Extrahiere die 8 wichtigsten universellen Marketing-Tipps aus den Insights.
 Antworte NUR mit einem JSON-Array ohne weiteren Text: ["tipp1", "tipp2", ...]"""
 
+PPV_SYSTEM = """Du bist ein Monetarisierungs-Experte für Content Creator.
+Basierend auf den Marketing-Insights: Erkläre konkret wann PPV (Pay-Per-View) eingesetzt werden soll,
+wie man es bepreist, und welche Content-Typen sich am besten dafür eignen.
+Antworte auf Deutsch, max 250 Wörter, als konkreter Aktionsplan."""
+
+DM_SYSTEM = """Du bist ein Konversions-Experte für direkte Fan-Kommunikation auf Abo-Plattformen.
+Basierend auf den Marketing-Insights: Erkläre konkret wie man in DMs Fans konvertiert —
+von Erstkontakt über Aufbau bis zum Kauf. Welche Nachrichten-Typen, Timing, Angebote.
+Antworte auf Deutsch, max 250 Wörter, als konkreter Aktionsplan."""
+
+RETENTION_SYSTEM = """Du bist ein Retention-Experte für Abo-Plattformen.
+Basierend auf den Marketing-Insights: Erkläre konkret wie man Fans langfristig hält,
+Churn reduziert, und inaktive Fans reaktiviert.
+Antworte auf Deutsch, max 250 Wörter, als konkreter Aktionsplan."""
+
 MAX_SNIPPETS = 30   # Token-Limit für LLM
 
 
@@ -168,16 +199,22 @@ def analyze_results(results: list[ResearchResult], client=None) -> MarketingInsi
     if not summary:
         summary = "Keine Zusammenfassung verfügbar."
 
-    # hilda_strategy, tia_strategy und tips parallel erzeugen (alle hängen nur von summary ab)
-    print("[RESEARCHER] Erstelle Persona-Strategien + Tipps parallel...")
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        f_hilda = ex.submit(_persona_strategy, "hilda", summary, c)
-        f_tia   = ex.submit(_persona_strategy, "tia",   summary, c)
-        f_tips  = ex.submit(chat, TIPS_SYSTEM, summary, c, 400)
+    # Alle 6 Analysen parallel (alle hängen nur von summary ab)
+    print("[RESEARCHER] Erstelle Strategien + Analysen parallel (6 Calls)...")
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        f_hilda     = ex.submit(_persona_strategy, "hilda", summary, c)
+        f_tia       = ex.submit(_persona_strategy, "tia",   summary, c)
+        f_tips      = ex.submit(chat, TIPS_SYSTEM,      summary, c, 400)
+        f_ppv       = ex.submit(chat, PPV_SYSTEM,        summary, c, 400)
+        f_dm        = ex.submit(chat, DM_SYSTEM,         summary, c, 400)
+        f_retention = ex.submit(chat, RETENTION_SYSTEM,  summary, c, 400)
 
-    hilda_strat = f_hilda.result()
-    tia_strat   = f_tia.result()
-    raw_tips    = f_tips.result() or ""
+    hilda_strat  = f_hilda.result()
+    tia_strat    = f_tia.result()
+    raw_tips     = f_tips.result() or ""
+    ppv_strat    = f_ppv.result()       or "Keine PPV-Strategie verfügbar."
+    dm_strat     = f_dm.result()        or "Keine DM-Strategie verfügbar."
+    retention    = f_retention.result() or "Keine Retention-Tipps verfügbar."
 
     tips: list[str] = []
     if raw_tips:
@@ -205,6 +242,9 @@ def analyze_results(results: list[ResearchResult], client=None) -> MarketingInsi
         hilda_strategy = hilda_strat,
         tia_strategy   = tia_strat,
         top_tips       = tips,
+        ppv_strategy   = ppv_strat,
+        dm_strategy    = dm_strat,
+        retention_tips = retention,
     )
 
 # ─── Save / Load ──────────────────────────────────────────────────────────────
@@ -228,8 +268,16 @@ def load_insights(path: Path) -> Optional[MarketingInsights]:
             ResearchResult(**{k: v for k, v in r.items() if k in known_rr})
             for r in data.get("raw_results", [])
         ]
-        known_mi = {"date", "raw_results", "summary", "hilda_strategy", "tia_strategy", "top_tips"}
-        return MarketingInsights(**{k: v for k, v in data.items() if k in known_mi})
+        known_mi = {
+            "date", "raw_results", "summary",
+            "hilda_strategy", "tia_strategy", "top_tips",
+            "ppv_strategy", "dm_strategy", "retention_tips",
+        }
+        filtered = {k: v for k, v in data.items() if k in known_mi}
+        # Rückwärts-Kompatibilität: neue Felder mit Fallback befüllen
+        for field in ("ppv_strategy", "dm_strategy", "retention_tips"):
+            filtered.setdefault(field, "")
+        return MarketingInsights(**filtered)
     except Exception as e:
         print(f"[RESEARCHER] Laden fehlgeschlagen: {e}")
         return None
@@ -262,6 +310,12 @@ if __name__ == "__main__":
     print(insights.hilda_strategy[:300])
     print("\nTIA STRATEGIE:")
     print(insights.tia_strategy[:300])
+    print("\nPPV STRATEGIE:")
+    print(insights.ppv_strategy[:300])
+    print("\nDM KONVERSION:")
+    print(insights.dm_strategy[:300])
+    print("\nRETENTION:")
+    print(insights.retention_tips[:300])
     print("\nTOP TIPPS:")
     for i, tip in enumerate(insights.top_tips, 1):
         print(f"  {i}. {tip}")
