@@ -89,6 +89,22 @@ def _spread_times(hours_pool: list[int], count: int) -> list[str]:
 
 # ─── Caption & Hashtag Generator ──────────────────────────────────────────────
 
+# 12 verschiedene Blickwinkel — damit wiederholter Content nicht erkennbar ist
+CAPTION_ANGLES = [
+    "Mysteriöse Andeutung — Neugier wecken ohne zu viel zu zeigen",
+    "Direkte Provokation — freche Challenge oder Aussage",
+    "Persönliche Story — als ob du gerade etwas Privates teilst",
+    "FOMO — andere verpassen das, du bist dabei",
+    "Frage an Follower — zum Kommentieren animieren",
+    "Exklusivität betonen — nur für die die wirklich dabei sind",
+    "Humor/Selbstironie — leichter witziger Ton",
+    "Emotionaler Hook — kurze ehrliche Aussage die berührt",
+    "Behind-the-Scenes — Blick hinter die Kulissen",
+    "Urgency/Countdown — limitiert, jetzt oder nie",
+    "Community-Kompliment — Fans fühlen sich besonders",
+    "Cliffhanger — Fortsetzung folgt, was passiert als nächstes",
+]
+
 CAPTION_SYSTEM = """Du bist ein Social-Media-Texter für Content-Creator auf Abo-Plattformen.
 Schreibe eine kurze, konvertierende Caption im Stil der Persona.
 VERBOTEN: mehr als 3 Sätze, Markdown, generische Phrasen.
@@ -104,17 +120,20 @@ def generate_caption(
     persona_name: str,
     post_type:    str,
     tip:          str,
+    angle:        str = "",
     client=None,
 ) -> str:
-    p      = PERSONAS[persona_name]
-    c      = client or make_client()
+    p          = PERSONAS[persona_name]
+    c          = client or make_client()
+    angle_line = f"Blickwinkel: {angle}\n" if angle else ""
     prompt = (
         f"Persona: {p['name']}, {p['age']}J., Stil: {p['style']}\n"
         f"Content-Typ: {score.type} | Post-Typ: {post_type}\n"
         f"Content-Stärken: {', '.join(score.strengths)}\n"
         f"Persona-Stil: {p['content_style']}\n"
-        f"Marketing-Tipp einbauen: {tip}\n\n"
-        f"Caption-Idee als Basis: {score.caption_idea}\n\n"
+        f"Marketing-Tipp einbauen: {tip}\n"
+        f"{angle_line}"
+        f"\nCaption-Idee als Basis: {score.caption_idea}\n\n"
         f"Schreibe die finale Caption als {p['name']}:"
     )
     result = chat(CAPTION_SYSTEM, prompt, c, max_tokens=100)
@@ -191,17 +210,23 @@ def build_post_schedule(
 
     times = _spread_times(PEAK_HOURS, posts_per_day)
 
-    # Alle Aufgaben vorbereiten
+    # Alle Aufgaben vorbereiten — Winkel rotieren bei wiederholtem Content
+    file_use_count: dict[str, int] = {}
     work_items = []
     for i in range(posts_per_day):
         content_item = scored[i % len(scored)]
         post_type    = "paid" if (i + 1) % paid_every == 0 else "free"
-        tip          = tips[i % len(tips)] if tips else "authentisch sein"
-        work_items.append((i, content_item, post_type, times[i], tip))
+        use_count    = file_use_count.get(content_item.file, 0)
+        angle        = CAPTION_ANGLES[use_count % len(CAPTION_ANGLES)]
+        # Tip versetzt: beim 2. Einsatz derselben Datei anderen Tip nehmen
+        tip_idx      = (i + use_count * 3) % len(tips) if tips else 0
+        tip          = tips[tip_idx] if tips else "authentisch sein"
+        file_use_count[content_item.file] = use_count + 1
+        work_items.append((i, content_item, post_type, times[i], tip, angle))
 
     def _generate_post(args) -> tuple[int, Post]:
-        idx, content_item, post_type, time_str, tip = args
-        caption  = generate_caption(content_item, persona_name, post_type, tip, c)
+        idx, content_item, post_type, time_str, tip, angle = args
+        caption  = generate_caption(content_item, persona_name, post_type, tip, angle, c)
         hashtags = generate_hashtags(content_item, persona_name, c)
         print(f"  Caption [{idx+1}/{posts_per_day}] {time_str} ({post_type}) ✓")
         return idx, Post(

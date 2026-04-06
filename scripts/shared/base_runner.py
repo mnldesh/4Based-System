@@ -1,13 +1,12 @@
 """
 base_runner.py — Gemeinsame Playwright-Logik für alle Account-Runner
 
-Loop-Logik:
-  - Login einmal, Browser bleibt offen
-  - Cursor geht Chat für Chat von oben nach unten durch die Inbox
-  - Jeder Chat: öffnen → History → User-Typ (gecacht) → KI-Antwort → Senden → zurück
-  - Alle 10–15 Minuten: zum Anfang scrollen, neue Nachrichten prüfen, sofort antworten,
-    dann exakt dort weitermachen wo pausiert wurde
-  - User-Typ wird nur einmal klassifiziert und in state/{name}_users.json gespeichert
+Loop-Design:
+  - Einmal einloggen, Browser bleibt offen
+  - Direkt mit Chat 0 beginnen (kein Vorscannen)
+  - Snapshot der Top-30-Previews beim Start
+  - Alle 5–8 Minuten: Top-30 prüfen, neue Nachrichten sofort beantworten
+  - User-Klassifizierung persistent in state/{name}_users.json (einmal pro User)
 """
 
 import asyncio
@@ -30,14 +29,12 @@ ROOT      = Path(__file__).resolve().parents[2]
 LOG_PATH  = ROOT / "logs" / "runner.jsonl"
 _log_lock = threading.Lock()
 
-# Check-Intervall: alle 10–15 Minuten nach neuen Nachrichten schauen
-CHECK_MIN = 600   # 10 Minuten
-CHECK_MAX = 900   # 15 Minuten
-
 MAX_TRAILING          = 10
 PREMIUM_HISTORY_LIMIT = 100
 DEFAULT_HISTORY_LIMIT = 20
-PEEK_TOP_N            = 30   # Obere N Chats beim Check vergleichen
+SNAPSHOT_SIZE         = 30   # Top-N Chats im periodischen Check
+CHECK_MIN             = 300  # 5 min in Sekunden
+CHECK_MAX             = 480  # 8 min in Sekunden
 
 # ─── Selectors ────────────────────────────────────────────────────────────────
 
@@ -165,38 +162,35 @@ def load_account(name: str, state_file: str) -> Account:
         raise SystemExit(f"[ERROR] Storage-State fehlt: {state_path}")
     return Account(name=name, storage_state=state_path, config=cfg)
 
-# ─── Persistente User-States ──────────────────────────────────────────────────
+# ─── Persistente User-States ─────────────────────────────────────────────────
 
-def load_user_states(name: str) -> dict:
-    """Liest gespeicherte User-Typen aus state/{name}_users.json."""
-    return load_json(ROOT / "state" / f"{name}_users.json", {})
+def load_user_states(account_name: str) -> dict:
+    """Liest state/{name}_users.json → {username: {type, revenue, seen_at}}"""
+    return load_json(ROOT / "state" / f"{account_name}_users.json", {})
 
 
-def save_user_states(name: str, states: dict) -> None:
-    """Schreibt User-Typen in state/{name}_users.json."""
-    path = ROOT / "state" / f"{name}_users.json"
+def save_user_states(account_name: str, states: dict) -> None:
+    path = ROOT / "state" / f"{account_name}_users.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(states, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def get_or_classify(
-    username:    str,
-    history:     list[Message],
-    revenue:     float,
-    user_states: dict,
+    username: str,
+    history:  list[Message],
+    revenue:  float,
+    states:   dict,
 ) -> str:
     """
-    Gibt den gecachten User-Typ zurück.
-    Re-klassifiziert nur wenn Revenue gestiegen ist (User hat gekauft).
+    Gibt gecachten User-Typ zurück.
+    Neu-klassifiziert nur wenn: unbekannt ODER Revenue gestiegen (Upgrade).
     """
-    cached = user_states.get(username)
-    if cached:
-        cached_revenue = cached.get("revenue", 0.0)
-        if revenue <= cached_revenue:
-            return cached["type"]
+    cached = states.get(username)
+    if cached and revenue <= cached.get("revenue", 0.0):
+        return cached["type"]
 
     user_type = classify_user(history, revenue)
-    user_states[username] = {
+    states[username] = {
         "type":    user_type,
         "revenue": revenue,
         "seen_at": now_utc().isoformat(),
@@ -211,11 +205,11 @@ def get_ai_reply(
     account_name: str,
     revenue:      float,
     client:       openai.OpenAI,
+    user_states:  dict,
     model:        str = TEXT_MODEL,
-    user_type:    Optional[str] = None,
 ) -> Optional[str]:
     persona   = PERSONAS[account_name]
-    utype     = user_type or classify_user(history, revenue)
+    user_type = get_or_classify(username, history, revenue, user_states)
     trailing  = trailing_own(history)
 
     user_msgs = [m.text for m in history if m.role == "user"]
@@ -223,7 +217,7 @@ def get_ai_reply(
 
     prompt = (
         f"Username: {username}\n"
-        f"Typ: {utype} | Rev: ${revenue:.0f} | OhneAntwort: {trailing}\n"
+        f"Typ: {user_type} | Rev: ${revenue:.0f} | OhneAntwort: {trailing}\n"
         f"Letzte user msg: {user_msgs[-1] if user_msgs else 'keine'}\n"
         f"Unsere letzten (nicht wiederholen): {' | '.join(last_own) if last_own else 'keine'}\n\n"
         f"Verlauf:\n{format_history(history)}\n\n"
@@ -402,6 +396,102 @@ async def read_item(page: Page, index: int) -> Optional[ChatItem]:
 
     return ChatItem(username=username, preview=preview, revenue=parse_revenue(revenue_raw))
 
+
+async def _read_username_fast(page: Page, index: int) -> Optional[str]:
+    """Schnelles Lesen nur des Usernamens (für Scan-Loops)."""
+    try:
+        item = page.locator(SEL["items"]).nth(index)
+        return (await item.locator(SEL["username"]).first.inner_text(timeout=200)).strip() or None
+    except Exception:
+        return None
+
+# ─── Snapshot & Check ─────────────────────────────────────────────────────────
+
+async def read_snapshot(page: Page) -> dict[str, str]:
+    """Scrollt nach oben, liest Top-SNAPSHOT_SIZE Chats → {username: preview}"""
+    await page.evaluate(SCROLL_TOP_JS)
+    await page.wait_for_timeout(600)
+    snapshot: dict[str, str] = {}
+    count = await page.locator(SEL["items"]).count()
+    for i in range(min(SNAPSHOT_SIZE, count)):
+        chat = await read_item(page, i)
+        if chat:
+            snapshot[chat.username] = chat.preview
+    return snapshot
+
+
+async def find_next_unprocessed(page: Page, processed: set[str]) -> Optional[ChatItem]:
+    """
+    Scannt die Inbox von oben nach unten.
+    Gibt den ersten noch nicht bearbeiteten Chat zurück.
+    Scrollt nach unten wenn alle sichtbaren bereits bearbeitet sind.
+    """
+    no_progress = 0
+    prev_count  = 0
+
+    while True:
+        count = await page.locator(SEL["items"]).count()
+
+        for i in range(count):
+            username = await _read_username_fast(page, i)
+            if username and username not in processed:
+                return await read_item(page, i)
+
+        if count <= prev_count:
+            no_progress += 1
+            if no_progress >= 3:
+                return None   # Ende der Inbox
+        else:
+            no_progress = 0
+
+        prev_count = count
+        await scroll_down(page)
+
+
+async def do_periodic_check(
+    page:        Page,
+    snapshot:    dict[str, str],
+    processed:   set[str],
+    account:     Account,
+    client:      openai.OpenAI,
+    user_states: dict,
+    dry_run:     bool,
+) -> dict[str, str]:
+    """
+    Scrollt zum Anfang, vergleicht Top-30 Previews mit Snapshot.
+    Antwortet sofort auf jede neue Nachricht.
+    Gibt aktualisierten Snapshot zurück.
+    """
+    current   = await read_snapshot(page)
+    new_found = 0
+
+    for username, preview in current.items():
+        if preview == snapshot.get(username, "") or username in processed:
+            continue
+        new_found += 1
+        print(f"  [CHECK] Neue Nachricht: {username}")
+        count = await page.locator(SEL["items"]).count()
+        for i in range(count):
+            try:
+                uname = (
+                    await page.locator(SEL["items"]).nth(i)
+                    .locator(SEL["username"]).first.inner_text(timeout=300)
+                ).strip()
+                if uname == username:
+                    chat = await read_item(page, i)
+                    if chat:
+                        limit = PREMIUM_HISTORY_LIMIT if chat.revenue > 20 else DEFAULT_HISTORY_LIMIT
+                        await process_chat(page, chat, account, client, dry_run, user_states, limit)
+                        processed.add(username)
+                    break
+            except Exception:
+                pass
+
+    if new_found == 0:
+        print(f"  [CHECK] Nichts Neues in Top-{SNAPSHOT_SIZE}")
+
+    return current
+
 # ─── Core: Chat verarbeiten ───────────────────────────────────────────────────
 
 async def process_chat(
@@ -413,7 +503,6 @@ async def process_chat(
     user_states: dict,
     hist_limit:  int = DEFAULT_HISTORY_LIMIT,
 ) -> bool:
-    """Öffnet einen Chat, generiert Antwort, sendet sie. Gibt True bei Erfolg zurück."""
     items   = page.locator(SEL["items"])
     count   = await items.count()
     clicked = False
@@ -450,15 +539,14 @@ async def process_chat(
         await navigate_back(page)
         return False
 
-    user_type = get_or_classify(item.username, history, item.revenue, user_states)
-    reply     = get_ai_reply(history, item.username, account.name, item.revenue, client,
-                             user_type=user_type)
+    reply = get_ai_reply(history, item.username, account.name, item.revenue, client, user_states)
     if not reply:
         print("  [SKIP] Kein AI-Reply")
         await navigate_back(page)
         return False
 
-    prefix = "[DRY] " if dry_run else ""
+    user_type = user_states.get(item.username, {}).get("type", "?")
+    prefix    = "[DRY] " if dry_run else ""
     print(f"  {user_type} | {prefix}{reply[:90]}")
 
     log_event({"kind": "draft", "account": account.name, "username": item.username,
@@ -478,44 +566,7 @@ async def process_chat(
     await page.wait_for_timeout(300)
     return True
 
-# ─── Periodischer Check: neue Nachrichten oben ────────────────────────────────
-
-async def _peek_and_respond(
-    page:         Page,
-    last_previews: dict[str, str],
-    account:      Account,
-    client:       openai.OpenAI,
-    dry_run:      bool,
-    user_states:  dict,
-) -> int:
-    """
-    Scrollt zum Anfang, liest obere PEEK_TOP_N Chats.
-    Antwortet auf alle Chats deren Preview sich geändert hat.
-    Gibt Anzahl der beantworteten Chats zurück.
-    """
-    await page.evaluate(SCROLL_TOP_JS)
-    await page.wait_for_timeout(600)
-
-    count     = await page.locator(SEL["items"]).count()
-    new_items: list[ChatItem] = []
-
-    for i in range(min(PEEK_TOP_N, count)):
-        item = await read_item(page, i)
-        if not item:
-            continue
-        if item.preview != last_previews.get(item.username, ""):
-            new_items.append(item)
-
-    for item in new_items:
-        print(f"\n  [NEW] {item.username} — antworte...", end=" ", flush=True)
-        limit = PREMIUM_HISTORY_LIMIT if item.revenue > 20 else DEFAULT_HISTORY_LIMIT
-        ok    = await process_chat(page, item, account, client, dry_run, user_states, limit)
-        if ok:
-            last_previews[item.username] = item.preview
-
-    return len(new_items)
-
-# ─── Haupt-Runner ─────────────────────────────────────────────────────────────
+# ─── Main Runner ──────────────────────────────────────────────────────────────
 
 async def run_account(
     account:  Account,
@@ -531,7 +582,7 @@ async def run_account(
 
     print(f"[{account.name.upper()}] Start {'(headless)' if headless else '(Browser sichtbar)'}")
 
-    while True:   # Crash-Recovery-Loop
+    while True:
         try:
             async with async_playwright() as pw:
                 browser = await pw.chromium.launch(headless=headless)
@@ -547,118 +598,95 @@ async def run_account(
                 await page.wait_for_timeout(2000)
                 await page.locator("chat-overview").wait_for(timeout=10000)
 
-                crash_delay   = 20   # nach erfolgreichem Start zurücksetzen
-                last_previews: dict[str, str] = {}
-                pass_num      = 0
+                crash_delay = 20
 
-                while True:   # Pass-Loop
-                    pass_num   += 1
+                # Einmaliger Snapshot der Top-30 als Baseline
+                snapshot   = await read_snapshot(page)
+                next_check = asyncio.get_event_loop().time() + random.randint(CHECK_MIN, CHECK_MAX)
+                pass_num   = 0
+
+                print(f"[{account.name.upper()}] Snapshot: {len(snapshot)} Chats | Starte direkt")
+
+                while True:
+                    pass_num += 1
                     sent = skip = 0
-                    next_check  = asyncio.get_event_loop().time() + random.uniform(CHECK_MIN, CHECK_MAX)
+                    processed_this_pass: set[str] = set()
 
                     print(f"\n[{account.name.upper()}] PASS {pass_num} | {now_utc().strftime('%H:%M:%S')}")
 
-                    # Zum Anfang der Inbox scrollen
-                    await page.evaluate(SCROLL_TOP_JS)
-                    await page.wait_for_timeout(800)
-
-                    cursor = 0
-
-                    while True:   # Cursor-Loop (ein Durchgang durch die Inbox)
-
-                        # ── Periodischer Check alle 10–15 Minuten ─────────────
-                        if asyncio.get_event_loop().time() >= next_check:
-                            replied = await _peek_and_respond(
-                                page, last_previews, account, client, dry_run, user_states
+                    # Inbox von oben nach unten bearbeiten — kein Vorscannen
+                    while True:
+                        # Periodischer Check alle 5–8 Minuten (zwischen Chats)
+                        now = asyncio.get_event_loop().time()
+                        if now >= next_check:
+                            print(f"\n[{account.name.upper()}] ── Periodischer Check ──")
+                            snapshot = await do_periodic_check(
+                                page, snapshot, processed_this_pass,
+                                account, client, user_states, dry_run,
                             )
-                            if replied:
-                                print(f"  [CHECK] {replied} neue Antwort(en) bearbeitet")
-                            else:
-                                print(f"  [CHECK] Keine neuen Nachrichten")
+                            next_check = now + random.randint(CHECK_MIN, CHECK_MAX)
+                            print(f"[{account.name.upper()}] ── Weiter ──\n")
 
-                            # Cursor-Position wiederherstellen
-                            items = page.locator(SEL["items"])
-                            if cursor > 0 and cursor < await items.count():
-                                try:
-                                    await items.nth(cursor).scroll_into_view_if_needed()
-                                    await page.wait_for_timeout(400)
-                                except Exception:
-                                    pass
+                        chat = await find_next_unprocessed(page, processed_this_pass)
+                        if not chat:
+                            break   # Ende der Inbox
 
-                            next_check = asyncio.get_event_loop().time() + random.uniform(CHECK_MIN, CHECK_MAX)
+                        label  = f"[${chat.revenue:.0f}]" if chat.revenue > 0 else "[NEU]"
+                        cached = user_states.get(chat.username, {}).get("type", "?")
+                        print(f"  → {chat.username} {label} [{cached}]", end=" ", flush=True)
 
-                        # ── Nächsten Chat lesen ───────────────────────────────
-                        items = page.locator(SEL["items"])
-                        count = await items.count()
+                        limit = PREMIUM_HISTORY_LIMIT if chat.revenue > 20 else DEFAULT_HISTORY_LIMIT
+                        ok    = await process_chat(page, chat, account, client, dry_run, user_states, limit)
 
-                        if cursor >= count:
-                            # Versuche mehr zu laden durch Scrollen
-                            prev_count = count
-                            await scroll_down(page)
-                            await page.wait_for_timeout(500)
-                            count = await items.count()
-                            if count <= prev_count:
-                                break   # Ende der Inbox
+                        processed_this_pass.add(chat.username)
+                        snapshot[chat.username] = chat.preview
+                        if ok:  sent += 1
+                        else:   skip += 1
 
-                        if cursor >= count:
-                            break
-
-                        item = await read_item(page, cursor)
-                        if not item:
-                            cursor += 1
-                            continue
-
-                        # Überspringen wenn Preview sich nicht geändert hat
-                        if last_previews.get(item.username) == item.preview:
-                            cursor += 1
-                            continue
-
-                        label      = "[NEU]" if item.revenue == 0 else f"[${item.revenue:.0f}]"
-                        cached_typ = user_states.get(item.username, {}).get("type", "?")
-                        print(f"  → {item.username} {label} [{cached_typ}]", end=" ", flush=True)
-
-                        limit = PREMIUM_HISTORY_LIMIT if item.revenue > 20 else DEFAULT_HISTORY_LIMIT
-                        ok    = await process_chat(page, item, account, client, dry_run, user_states, limit)
-
-                        last_previews[item.username] = item.preview
-                        if ok: sent += 1
-                        else:  skip += 1
-
-                        cursor += 1
-
-                    # ── Pass abgeschlossen ─────────────────────────────────────
+                    # Pass abgeschlossen
                     save_user_states(account.name, user_states)
                     print(
                         f"\n[{account.name.upper()}] Pass {pass_num} fertig | "
-                        f"Gesendet:{sent} Geskippt:{skip}"
+                        f"Gesendet:{sent} Geskippt:{skip} Besucht:{len(processed_this_pass)}"
                     )
                     log_event({
-                        "kind":    "pass_complete",
-                        "account": account.name,
-                        "pass":    pass_num,
-                        "sent":    sent,
-                        "skipped": skip,
+                        "kind": "pass_complete", "account": account.name, "pass": pass_num,
+                        "sent": sent, "skipped": skip, "visited": len(processed_this_pass),
                         "dry_run": dry_run,
                     })
 
                     if once:
                         break
 
-                    if sent == 0:
-                        print(f"[{account.name.upper()}] Nichts zu tun — warte 30s...")
+                    # Auf neue Nachrichten warten (max 3× 30s = 90s)
+                    found_new = False
+                    for attempt in range(3):
                         await asyncio.sleep(30)
+                        new_snap = await read_snapshot(page)
+                        changed  = {u for u, p in new_snap.items() if p != snapshot.get(u, "")}
+                        if changed:
+                            print(f"[{account.name.upper()}] {len(changed)} neue Nachrichten → neuer Pass")
+                            snapshot  = new_snap
+                            found_new = True
+                            break
+                        print(f"[{account.name.upper()}] Warte... ({attempt+1}/3)")
+
+                    if not found_new:
+                        snapshot = await read_snapshot(page)   # Snapshot aktualisieren
 
                 await ctx.close()
                 await browser.close()
-                break   # Sauberer Exit
+                break
 
         except asyncio.CancelledError:
             print(f"\n[{account.name.upper()}] Gestoppt")
+            save_user_states(account.name, user_states)
             break
         except Exception as e:
             print(f"\n[{account.name.upper()}] CRASH: {type(e).__name__}: {e}")
             log_event({"kind": "crash", "account": account.name,
                        "error": f"{type(e).__name__}: {e}"})
+            save_user_states(account.name, user_states)
             if once:
                 break
             print(f"[{account.name.upper()}] Neustart in {crash_delay}s...")
