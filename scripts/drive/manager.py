@@ -1,13 +1,19 @@
 """
 drive/manager.py — Google Drive Integration
 
-Setup:
-  1. Google Cloud Console → Projekt erstellen
-  2. Google Drive API aktivieren
-  3. Service Account erstellen → JSON-Key downloaden
-  4. Service Account Email im Drive-Ordner als Editor hinzufügen
-  5. Key nach config/google_service_account.json kopieren
-  6. pip install google-api-python-client google-auth
+Setup Option A — OAuth 2.0 (empfohlen, kein Service Account Key nötig):
+  1. Google Cloud Console → Google Drive API aktivieren
+  2. Anmeldedaten → OAuth-Client-ID → Desktop App → JSON herunterladen
+  3. Speichern als config/google_oauth_client.json
+  4. Beim ersten Lauf öffnet sich Browser → einmalig einloggen → token wird gespeichert
+  5. pip install google-api-python-client google-auth google-auth-oauthlib
+
+Setup Option B — Service Account (wenn Org-Policy Key-Erstellung erlaubt):
+  1. Google Cloud Console → Google Drive API aktivieren
+  2. Service Account erstellen → JSON-Key downloaden
+  3. Service Account Email im Drive-Ordner als Editor hinzufügen
+  4. Speichern als config/google_service_account.json
+  5. pip install google-api-python-client google-auth
 """
 
 import io
@@ -22,9 +28,13 @@ from typing import Generator, Optional
 
 UPLOAD_WORKERS = 4   # Parallele Upload-Threads
 
-ROOT             = Path(__file__).resolve().parents[2]
-CREDENTIALS_PATH = ROOT / "config" / "google_service_account.json"
-DOWNLOAD_DIR     = ROOT / "data" / "drive_cache"
+ROOT                = Path(__file__).resolve().parents[2]
+CREDENTIALS_PATH    = ROOT / "config" / "google_service_account.json"
+OAUTH_CLIENT_PATH   = ROOT / "config" / "google_oauth_client.json"
+OAUTH_TOKEN_PATH    = ROOT / "config" / "google_oauth_token.json"
+DOWNLOAD_DIR        = ROOT / "data" / "drive_cache"
+
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 MIME_TYPES = {
     ".jpg":  "image/jpeg",
@@ -55,24 +65,53 @@ def _get_service():
         if _drive_service:
             return _drive_service
         try:
-            from google.oauth2 import service_account
             from googleapiclient.discovery import build
 
-            if not CREDENTIALS_PATH.exists():
+            creds = None
+
+            # Option A: OAuth 2.0 (Desktop App)
+            if OAUTH_CLIENT_PATH.exists():
+                from google.oauth2.credentials import Credentials
+                from google.auth.transport.requests import Request
+                from google_auth_oauthlib.flow import InstalledAppFlow
+
+                if OAUTH_TOKEN_PATH.exists():
+                    creds = Credentials.from_authorized_user_file(
+                        str(OAUTH_TOKEN_PATH), SCOPES
+                    )
+                if not creds or not creds.valid:
+                    if creds and creds.expired and creds.refresh_token:
+                        creds.refresh(Request())
+                    else:
+                        flow = InstalledAppFlow.from_client_secrets_file(
+                            str(OAUTH_CLIENT_PATH), SCOPES
+                        )
+                        creds = flow.run_local_server(port=0)
+                    OAUTH_TOKEN_PATH.write_text(creds.to_json())
+                    print(f"[DRIVE] OAuth Token gespeichert: {OAUTH_TOKEN_PATH}")
+
+            # Option B: Service Account
+            elif CREDENTIALS_PATH.exists():
+                from google.oauth2 import service_account
+                creds = service_account.Credentials.from_service_account_file(
+                    str(CREDENTIALS_PATH), scopes=SCOPES
+                )
+
+            else:
                 raise FileNotFoundError(
-                    f"Service Account Key fehlt: {CREDENTIALS_PATH}\n"
+                    "Google Drive Authentifizierung fehlt.\n"
+                    f"  OAuth: {OAUTH_CLIENT_PATH}\n"
+                    f"  Service Account: {CREDENTIALS_PATH}\n"
                     "Siehe drive/manager.py für Setup-Anleitung."
                 )
-            creds = service_account.Credentials.from_service_account_file(
-                str(CREDENTIALS_PATH),
-                scopes=["https://www.googleapis.com/auth/drive"],
-            )
+
             _drive_service = build("drive", "v3", credentials=creds)
             return _drive_service
-        except ImportError:
+
+        except ImportError as e:
             raise ImportError(
-                "Google Drive Pakete fehlen:\n"
-                "pip install google-api-python-client google-auth"
+                f"Google Drive Pakete fehlen: {e}\n"
+                "pip install google-api-python-client google-auth google-auth-oauthlib"
             )
 
 # ─── Folder Management ────────────────────────────────────────────────────────
