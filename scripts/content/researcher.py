@@ -8,6 +8,7 @@ Optimierungen:
 """
 
 import json
+import sys
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -16,7 +17,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from duckduckgo_search import DDGS
+# Sicherstellen dass scripts/ im Suchpfad ist (auch bei direktem Aufruf)
+_SCRIPTS = Path(__file__).resolve().parent.parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+try:
+    from ddgs import DDGS
+except ImportError:
+    from duckduckgo_search import DDGS
 
 from shared.ai_client import make_client, chat, parse_json_from_response
 from shared.personas import PERSONAS
