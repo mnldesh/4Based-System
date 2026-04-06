@@ -277,7 +277,10 @@ def get_ai_reply(
         f"Deine letzten Nachrichten (nicht wiederholen!): {last_own_str}\n\n"
         f"STRATEGIE: {strategy}\n\n"
         f"STRENG VERBOTEN: generische Phrasen ('Oster-Deal', 'nur heute', 'exklusiv für dich'), "
-        f"Gutschein-Code direkt nennen ohne Kontext, gleiche Formulierung wie vorher.\n\n"
+        f"Gutschein-Code direkt nennen ohne Kontext, gleiche Formulierung wie vorher, "
+        f"Formulierungen wie 'Ich habe gehört...' oder 'Ich weiß dass du...' — "
+        f"stattdessen natürlich klingen: 'ich hab mir gemerkt dass du...', 'da du ja ... bist', "
+        f"'weil du letztes Mal...' — als ob du dich wirklich erinnerst.\n\n"
         f"Schreib jetzt die nächste Nachricht von {persona['name']}. "
         f"Nur 1-2 Sätze. Kein Präfix. Kein Markdown. Nur die Nachricht."
     )
