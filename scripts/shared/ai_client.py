@@ -190,30 +190,48 @@ def vision(
 
 
 def parse_json_from_response(raw: str) -> Optional[dict]:
-    """Extrahiert JSON sicher via JSONDecoder.raw_decode()."""
+    """Extrahiert JSON sicher via JSONDecoder.raw_decode(), repariert truncated JSON."""
     import json
     if not raw:
         return None
     decoder = json.JSONDecoder()
     text    = raw.strip()
 
+    def _try_parse(s: str, offset: int = 0) -> Optional[dict]:
+        try:
+            obj, _ = decoder.raw_decode(s, offset)
+            return obj if isinstance(obj, dict) else None
+        except json.JSONDecodeError:
+            return None
+
+    def _repair_and_parse(s: str) -> Optional[dict]:
+        """Offene geschweifte Klammern schließen und nochmal versuchen."""
+        open_b = s.count('{') - s.count('}')
+        if open_b > 0:
+            repaired = s + '}' * open_b
+            return _try_parse(repaired)
+        return None
+
     start = text.find("{")
     if start != -1:
-        try:
-            obj, _ = decoder.raw_decode(text, start)
-            return obj
-        except json.JSONDecodeError:
-            pass
+        result = _try_parse(text, start)
+        if result is not None:
+            return result
+        # Truncated JSON reparieren
+        result = _repair_and_parse(text[start:])
+        if result is not None:
+            return result
 
     # Fallback: Markdown-Code-Block entfernen
     cleaned = _RE_CODE.sub("", text).strip()
     start   = cleaned.find("{")
     if start != -1:
-        try:
-            obj, _ = decoder.raw_decode(cleaned, start)
-            return obj
-        except json.JSONDecodeError:
-            pass
+        result = _try_parse(cleaned, start)
+        if result is not None:
+            return result
+        result = _repair_and_parse(cleaned[start:])
+        if result is not None:
+            return result
 
     return None
 

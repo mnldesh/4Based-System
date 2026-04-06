@@ -412,7 +412,7 @@ def analyze_folder(folder: Path, min_score: int = 6, client=None) -> list[Conten
         print(f"  [VID] {f.name}", end=" ... ", flush=True)
         s = analyze_video(f, c)
         if s:
-            dur     = s.video_meta.get("duration", 0)
+            dur     = float(s.video_meta.get("duration", 0) or 0)
             hook    = "✓hook" if s.video_meta.get("has_strong_hook") else "schwacher hook"
             mins    = int(dur // 60); secs = int(dur % 60)
             dur_str = f"{mins}m{secs:02d}s" if mins > 0 else f"{secs}s"
@@ -501,7 +501,7 @@ if __name__ == "__main__":
     if results:
         print(f"\nTOP 5:")
         for r in results[:5]:
-            t = f"({r.video_meta.get('duration', 0):.0f}s)" if r.type == "video" else ""
+            t = f"({float(r.video_meta.get('duration', 0) or 0):.0f}s)" if r.type == "video" else ""
             print(f"  {r.score}/10 [{r.placement}] {Path(r.file).name} {t}")
             if r.caption_idea: print(f"    Caption: {r.caption_idea[:70]}")
             if r.hook_idea:    print(f"    Hook:    {r.hook_idea[:70]}")
