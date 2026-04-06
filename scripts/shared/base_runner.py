@@ -170,25 +170,47 @@ def load_account(name: str, state_file: str) -> Account:
 
 async def save_session(name: str, state_file: str) -> None:
     """
-    Öffnet einen sichtbaren Browser auf 4based.com.
-    Nach manuellem Login ENTER drücken → Session wird in state/ gespeichert.
+    Liest Credentials aus config/{name}.env und loggt automatisch ein.
+    Falls keine Credentials vorhanden → manueller Login mit ENTER.
     """
+    import os
     from playwright.async_api import async_playwright
 
-    state_path = ROOT / "state" / state_file
+    state_path  = ROOT / "state" / state_file
+    env_file    = ROOT / "config" / f"{name}.env"
     state_path.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"\n[{name.upper()}] Session-Setup")
-    print("  Browser öffnet sich — bitte manuell einloggen.")
-    print("  Danach ENTER drücken um Session zu speichern.\n")
+    # Credentials laden
+    email = password = ""
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if line.startswith("EMAIL="):
+                email = line.split("=", 1)[1].strip()
+            elif line.startswith("PASSWORD="):
+                password = line.split("=", 1)[1].strip()
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=False)
         ctx     = await browser.new_context(locale="de-DE")
         page    = await ctx.new_page()
-        await page.goto("https://4based.com", wait_until="domcontentloaded")
+        await page.goto("https://4based.com/login", wait_until="domcontentloaded")
+        await page.wait_for_timeout(2000)
 
-        # Warten bis User fertig ist
+        if email and password:
+            print(f"\n[{name.upper()}] Auto-Login mit {email}...")
+            try:
+                await page.fill("input[type='email'], input[name='email']", email, timeout=5000)
+                await page.fill("input[type='password'], input[name='password']", password, timeout=5000)
+                await page.click("button[type='submit'], ion-button:has-text('Login'), ion-button:has-text('Einloggen')", timeout=5000)
+                await page.wait_for_timeout(4000)
+                print(f"[{name.upper()}] Login abgeschickt — prüfe ob erfolgreich...")
+            except Exception as e:
+                print(f"[{name.upper()}] Auto-Login fehlgeschlagen: {e}")
+                print("  Bitte manuell einloggen.")
+        else:
+            print(f"\n[{name.upper()}] Keine Credentials in {env_file}")
+            print("  Bitte manuell einloggen.")
+
         await asyncio.get_event_loop().run_in_executor(
             None, input, "  Nach dem Login ENTER drücken..."
         )
