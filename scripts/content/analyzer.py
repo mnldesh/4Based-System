@@ -239,9 +239,9 @@ def analyze_image(path: Path, client=None) -> Optional[ContentScore]:
     return ContentScore(
         file             = str(path),
         type             = "image",
-        score            = int(data.get("score", 5)),
-        production_score = int(data.get("production_score", 5)),
-        erotic_score     = int(data.get("erotic_score", 5)),
+        score            = int(float(data.get("score", 5) or 5)),
+        production_score = int(float(data.get("production_score", 5) or 5)),
+        erotic_score     = int(float(data.get("erotic_score", 5) or 5)),
         strengths        = data.get("strengths", []),
         weaknesses       = data.get("weaknesses", []),
         placement        = data.get("placement", "paid"),
@@ -330,9 +330,9 @@ def analyze_video(path: Path, client=None) -> Optional[ContentScore]:
     return ContentScore(
         file             = str(path),
         type             = "video",
-        score            = int(data.get("score", 5)),
-        production_score = int(data.get("production_score", 5)),
-        erotic_score     = int(data.get("erotic_score", 5)),
+        score            = int(float(data.get("score", 5) or 5)),
+        production_score = int(float(data.get("production_score", 5) or 5)),
+        erotic_score     = int(float(data.get("erotic_score", 5) or 5)),
         strengths        = data.get("strengths", []),
         weaknesses       = data.get("weaknesses", []),
         placement        = data.get("placement", "paid"),
@@ -355,16 +355,17 @@ def analyze_video(path: Path, client=None) -> Optional[ContentScore]:
 
 def _fallback_video_score(path: Path, frame_results: list[dict], info: dict) -> ContentScore:
     """Einfacher Durchschnitt wenn LLM-Summary fehlschlägt."""
-    prod  = [f.get("production_score", 5) for f in frame_results]
-    ero   = [f.get("erotic_score", 5) for f in frame_results]
+    def _n(v, default=5): return int(float(v or default))  # str/float/None → int
+    prod  = [_n(f.get("production_score", 5)) for f in frame_results]
+    ero   = [_n(f.get("erotic_score", 5))     for f in frame_results]
     avg_p = round(sum(prod) / len(prod))
     avg_e = round(sum(ero)  / len(ero))
     score = round((avg_p + avg_e) / 2)
-    hilda = round(sum(f.get("persona_fit", {}).get("hilda", 5) for f in frame_results) / len(frame_results))
-    tia   = round(sum(f.get("persona_fit", {}).get("tia",   5) for f in frame_results) / len(frame_results))
+    hilda = round(sum(_n(f.get("persona_fit", {}).get("hilda", 5)) for f in frame_results) / len(frame_results))
+    tia   = round(sum(_n(f.get("persona_fit", {}).get("tia",   5)) for f in frame_results) / len(frame_results))
 
     return ContentScore(
-        file="str(path)", type="video", score=score,
+        file=str(path), type="video", score=score,
         production_score=avg_p, erotic_score=avg_e,
         strengths=[], weaknesses=[], placement="paid",
         best_for=["paid"], content_category="softcore",
