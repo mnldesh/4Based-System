@@ -62,7 +62,7 @@ def main() -> None:
     if not args.dry_run:
         step_upload_plans(plans, cfg)
 
-    print_summary(analysis, plans)
+    print_summary(plans, analysis)
 
 
 if __name__ == "__main__":
