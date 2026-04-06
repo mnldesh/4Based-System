@@ -1,204 +1,124 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # =============================================================================
-#  4based-system — Vollständiges Installations-Script
-#  Für Ubuntu/Debian (auch WSL auf Windows)
-#
-#  Ausführen:
-#    chmod +x install.sh && bash install.sh
+# 4Based Automation System — Vollständiges Installations-Script
+# Ausführen: bash install.sh
 # =============================================================================
 
-set -euo pipefail
+set -e
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-BOLD='\033[1m'
-NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
+info()  { echo -e "${BLUE}[INFO]${NC} $1"; }
+ok()    { echo -e "${GREEN}[OK]${NC} $1"; }
+warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
-ok()   { echo -e "${GREEN}✓${NC} $*"; }
-warn() { echo -e "${YELLOW}⚠${NC}  $*"; }
-err()  { echo -e "${RED}✗${NC} $*"; }
-info() { echo -e "${BLUE}→${NC} $*"; }
-head() { echo -e "\n${BOLD}$*${NC}"; }
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$DIR"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+echo ""
+echo "============================================================"
+echo "  4Based Automation System — Installation"
+echo "============================================================"
+echo ""
 
-clear
-echo -e "${BOLD}"
-echo "  ╔══════════════════════════════════════╗"
-echo "  ║       4based-system — Setup          ║"
-echo "  ╚══════════════════════════════════════╝"
-echo -e "${NC}"
-
-# ─── Root-Check ───────────────────────────────────────────────────────────────
-if [ "$EUID" -eq 0 ]; then
-    warn "Läuft als root. Empfohlen: normaler User mit sudo-Rechten."
-fi
-
-# ─── OS prüfen ────────────────────────────────────────────────────────────────
-head "[ 1 / 9 ]  System-Pakete"
-
-if ! command -v apt-get &>/dev/null; then
-    err "apt-get nicht gefunden. Dieses Script funktioniert nur auf Ubuntu/Debian."
-    echo "  macOS-User: brew install python ffmpeg und dann manuell weiter."
-    exit 1
-fi
-
-info "Paketliste aktualisieren..."
+# ─── 1. System-Pakete ─────────────────────────────────────────────────────────
+info "System-Pakete installieren..."
 sudo apt-get update -qq
-
-info "Installiere Basis-Pakete..."
 sudo apt-get install -y -qq \
-    python3 \
-    python3-pip \
-    python3-venv \
-    python3-dev \
-    ffmpeg \
-    git \
-    curl \
-    wget \
-    ca-certificates \
-    gnupg \
-    lsb-release \
-    2>/dev/null
-
+    python3 python3-pip python3-venv \
+    ffmpeg git curl wget 2>/dev/null || true
 ok "System-Pakete installiert"
 
-# ─── Python-Version prüfen ────────────────────────────────────────────────────
-head "[ 2 / 9 ]  Python"
-
-PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-info "Python $PY_VER gefunden"
-
-if python3 -c "import sys; exit(0 if sys.version_info >= (3,10) else 1)" 2>/dev/null; then
-    ok "Python $PY_VER ≥ 3.10"
+# ─── 2. Python venv ───────────────────────────────────────────────────────────
+info "Python Virtual Environment..."
+if [ ! -d ".venv" ]; then
+    python3 -m venv .venv
+    ok "venv erstellt"
 else
-    warn "Python $PY_VER < 3.10 — installiere Python 3.11..."
-    sudo apt-get install -y -qq software-properties-common 2>/dev/null || true
-    sudo add-apt-repository -y ppa:deadsnakes/ppa 2>/dev/null || true
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq python3.11 python3.11-venv python3.11-dev 2>/dev/null
-    # Standardmäßig python3.11 nutzen
-    sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 2>/dev/null || true
-    ok "Python 3.11 installiert"
+    ok "venv bereits vorhanden"
 fi
 
-# ─── Virtuelle Umgebung ───────────────────────────────────────────────────────
-head "[ 3 / 9 ]  Virtuelle Python-Umgebung"
+source .venv/bin/activate
 
-if [ ! -d "$SCRIPT_DIR/.venv" ]; then
-    info "Erstelle .venv..."
-    python3 -m venv "$SCRIPT_DIR/.venv"
-    ok ".venv erstellt"
-else
-    ok ".venv bereits vorhanden"
-fi
+# ─── 3. Python-Pakete ─────────────────────────────────────────────────────────
+info "Python-Pakete installieren..."
+pip install --upgrade pip -q
 
-# shellcheck disable=SC1091
-source "$SCRIPT_DIR/.venv/bin/activate"
-
-# ─── Python-Pakete ────────────────────────────────────────────────────────────
-head "[ 4 / 9 ]  Python-Pakete"
-
-info "pip upgraden..."
-pip install --quiet --upgrade pip
-
-info "Pakete installieren..."
-pip install --quiet \
+pip install -q \
     openai \
     playwright \
-    "duckduckgo-search>=6.0" \
+    ddgs \
     google-api-python-client \
     google-auth \
-    google-auth-httplib2
+    google-auth-oauthlib \
+    Pillow \
+    requests
 
 ok "Python-Pakete installiert"
 
-# ─── Playwright Browser ───────────────────────────────────────────────────────
-head "[ 5 / 9 ]  Playwright Browser (Chromium)"
+# ─── 4. Playwright Browser ────────────────────────────────────────────────────
+info "Playwright Chromium installieren..."
+python -m playwright install chromium
+python -m playwright install-deps chromium 2>/dev/null || true
+ok "Playwright installiert"
 
-info "Installiere Chromium + Abhängigkeiten..."
-python3 -m playwright install chromium --with-deps 2>&1 | tail -5
-ok "Playwright Chromium bereit"
-
-# ─── ffmpeg prüfen ────────────────────────────────────────────────────────────
-head "[ 6 / 9 ]  ffmpeg"
-
-if command -v ffmpeg &>/dev/null && command -v ffprobe &>/dev/null; then
-    FFVER=$(ffmpeg -version 2>&1 | head -1 | awk '{print $3}')
-    ok "ffmpeg $FFVER + ffprobe vorhanden"
-else
-    err "ffmpeg fehlt trotz Installation — bitte manuell prüfen: sudo apt install ffmpeg"
-fi
-
-# ─── Ollama installieren ───────────────────────────────────────────────────────
-head "[ 7 / 9 ]  Ollama (Lokale KI)"
-
-if command -v ollama &>/dev/null; then
-    OLLVER=$(ollama --version 2>/dev/null | head -1)
-    ok "Ollama bereits installiert: $OLLVER"
-else
-    info "Installiere Ollama..."
+# ─── 5. Ollama ────────────────────────────────────────────────────────────────
+info "Ollama prüfen..."
+if ! command -v ollama &>/dev/null; then
+    info "Ollama installieren..."
     curl -fsSL https://ollama.ai/install.sh | sh
     ok "Ollama installiert"
+else
+    ok "Ollama bereits vorhanden"
 fi
 
-# Ollama im Hintergrund starten falls nicht läuft
-if ! pgrep -x ollama &>/dev/null; then
-    info "Starte Ollama-Dienst..."
+# Ollama starten falls nicht aktiv
+if ! curl -s http://127.0.0.1:11434/api/tags &>/dev/null; then
+    info "Ollama starten..."
     ollama serve &>/dev/null &
-    OLLAMA_PID=$!
-    sleep 3
-    ok "Ollama gestartet (PID $OLLAMA_PID)"
-else
-    ok "Ollama läuft bereits"
+    sleep 8
 fi
 
-# Modelle laden (dauert je nach Internet 5–20 min)
-echo ""
-echo -e "  ${YELLOW}Ollama-Modelle werden jetzt geladen (~16 GB gesamt).${NC}"
-echo -e "  ${YELLOW}Das kann 5–20 Minuten dauern je nach Internetgeschwindigkeit.${NC}"
-echo ""
+# ─── 6. Ollama Modelle ────────────────────────────────────────────────────────
+info "Ollama Modelle prüfen..."
+warn "qwen3:14b = ~9.3 GB | llava:7b = ~4.7 GB — Download kann lang dauern!"
 
-info "Lade qwen3:14b (Text-Modell, ~8 GB)..."
-if ollama list 2>/dev/null | grep -q "qwen3:14b"; then
-    ok "qwen3:14b bereits vorhanden"
-else
+if ! ollama list 2>/dev/null | grep -q "qwen3:14b"; then
+    info "qwen3:14b herunterladen (~9.3 GB)..."
     ollama pull qwen3:14b
-    ok "qwen3:14b geladen"
-fi
-
-info "Lade llava:13b (Bild/Video-Modell, ~8 GB)..."
-if ollama list 2>/dev/null | grep -q "llava:13b"; then
-    ok "llava:13b bereits vorhanden"
+    ok "qwen3:14b installiert"
 else
-    ollama pull llava:13b
-    ok "llava:13b geladen"
+    ok "qwen3:14b bereits vorhanden"
 fi
 
-# ─── Ordnerstruktur ───────────────────────────────────────────────────────────
-head "[ 8 / 9 ]  Ordner & Konfiguration"
+if ! ollama list 2>/dev/null | grep -q "llava:7b"; then
+    info "llava:7b herunterladen (~4.7 GB)..."
+    ollama pull llava:7b
+    ok "llava:7b installiert"
+else
+    ok "llava:7b bereits vorhanden"
+fi
 
-info "Erstelle Ordnerstruktur..."
+# ─── 7. Ordnerstruktur ────────────────────────────────────────────────────────
+info "Ordnerstruktur erstellen..."
 mkdir -p \
-    "$SCRIPT_DIR/config" \
-    "$SCRIPT_DIR/data/analysis" \
-    "$SCRIPT_DIR/data/research" \
-    "$SCRIPT_DIR/data/drive_cache/media" \
-    "$SCRIPT_DIR/data/Plan für die nächsten Tage/Hilda" \
-    "$SCRIPT_DIR/data/Plan für die nächsten Tage/Tia" \
-    "$SCRIPT_DIR/logs" \
-    "$SCRIPT_DIR/state"
+    config \
+    data/drive_cache/tmp \
+    data/drive_cache/media \
+    data/analysis \
+    data/research \
+    "data/Plan für die nächsten Tage" \
+    state \
+    logs
 ok "Ordner erstellt"
 
-# Config-Dateien erstellen (nur wenn noch nicht vorhanden)
-ORCH_CFG="$SCRIPT_DIR/config/orchestrator.json"
-if [ ! -f "$ORCH_CFG" ]; then
-    cat > "$ORCH_CFG" << 'EOF'
+# ─── 8. Config erstellen falls nicht vorhanden ────────────────────────────────
+if [ ! -f "config/orchestrator.json" ]; then
+    cat > config/orchestrator.json << 'CONF'
 {
-  "drive_source_folder_id": "",
-  "drive_output_folder_id": "",
+  "drive_source_folder_hilda": "",
+  "drive_source_folder_tia":   "",
+  "drive_output_folder_id":    "",
   "min_content_score": 6,
   "posts_per_day": 11,
   "mass_msg_count": 4,
@@ -206,96 +126,30 @@ if [ ! -f "$ORCH_CFG" ]; then
   "personas": ["hilda", "tia"],
   "research_every_days": 3
 }
-EOF
-    warn "config/orchestrator.json erstellt — Drive Folder-IDs noch leer"
+CONF
+    ok "config/orchestrator.json erstellt"
 else
-    ok "config/orchestrator.json vorhanden"
+    ok "config/orchestrator.json bereits vorhanden"
 fi
 
-for PERSONA in hilda tia; do
-    CFG="$SCRIPT_DIR/config/${PERSONA}.json"
-    if [ ! -f "$CFG" ]; then
-        cat > "$CFG" << EOF
-{
-  "username": "",
-  "password": "",
-  "headless": true
-}
-EOF
-        warn "config/${PERSONA}.json erstellt — Username/Passwort noch leer"
-    else
-        ok "config/${PERSONA}.json vorhanden"
-    fi
-done
-
-# ─── 4based.com Login-Sessions speichern ──────────────────────────────────────
-head "[ 9 / 9 ]  4based.com Login-Sessions"
-
+# ─── 9. Fertig ────────────────────────────────────────────────────────────────
 echo ""
-echo -e "  Jetzt werden die Browser-Sessions für Hilda und Tia gespeichert."
-echo -e "  ${YELLOW}Der Browser öffnet sich — logge dich ein und drücke ENTER.${NC}"
+echo "============================================================"
+echo -e "  ${GREEN}Installation abgeschlossen!${NC}"
+echo "============================================================"
 echo ""
-
-save_session() {
-    local NAME="$1"
-    local OUT="$SCRIPT_DIR/state/${NAME}.storage.json"
-
-    if [ -f "$OUT" ]; then
-        echo -e "  ${GREEN}✓${NC} state/${NAME}.storage.json bereits vorhanden — überspringe"
-        return
-    fi
-
-    echo -e "  ${BLUE}→${NC} Öffne Browser für ${BOLD}${NAME}${NC}..."
-    python3 - "$NAME" "$OUT" << 'PYEOF'
-import asyncio, sys
-from playwright.async_api import async_playwright
-
-async def main():
-    name, out = sys.argv[1], sys.argv[2]
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=False)
-        ctx = await browser.new_context()
-        page = await ctx.new_page()
-        await page.goto("https://4based.com")
-        print(f"\n  ➤  Logge dich jetzt als {name.upper()} bei 4based.com ein.")
-        print(f"     Wenn du eingeloggt bist, drücke ENTER in diesem Terminal.\n")
-        input("  [ENTER drücken wenn eingeloggt] ")
-        await ctx.storage_state(path=out)
-        await browser.close()
-        print(f"  Session gespeichert: {out}\n")
-
-asyncio.run(main())
-PYEOF
-}
-
-save_session "hilda"
-save_session "tia"
-
-# ─── Abschluss ────────────────────────────────────────────────────────────────
+echo "NÄCHSTE SCHRITTE:"
 echo ""
-echo -e "${BOLD}${GREEN}"
-echo "  ╔══════════════════════════════════════╗"
-echo "  ║       Installation abgeschlossen!    ║"
-echo "  ╚══════════════════════════════════════╝"
-echo -e "${NC}"
-
-echo "  Was als nächstes zu tun ist:"
+echo "1. Google Drive (falls noch nicht eingerichtet):"
+echo "   → config/google_oauth_client.json ablegen"
+echo "   → Ordner-IDs in config/orchestrator.json eintragen"
 echo ""
-echo -e "  ${YELLOW}1.${NC} Aktiviere die Umgebung:"
-echo "       source .venv/bin/activate"
+echo "2. Testen:"
+echo "   source .venv/bin/activate"
+echo "   python scripts/hilda_planner.py --dry-run"
+echo "   python scripts/tia_planner.py   --dry-run"
 echo ""
-echo -e "  ${YELLOW}2.${NC} Trage 4based.com Login-Daten ein (falls noch nicht passiert):"
-echo "       nano config/hilda.json"
-echo "       nano config/tia.json"
-echo ""
-echo -e "  ${YELLOW}3.${NC} (Optional) Google Drive:"
-echo "       config/google_service_account.json → Service Account JSON dort ablegen"
-echo "       config/orchestrator.json → drive_source_folder_id eintragen"
-echo ""
-echo -e "  ${YELLOW}4.${NC} System starten:"
-echo "       python scripts/orchestrator.py          # Tagesplan erstellen"
-echo "       python scripts/hilda_runner.py          # Hilda DM-Bot"
-echo "       python scripts/tia_runner.py            # Tia DM-Bot"
-echo ""
-echo "  Details: ANLEITUNG.md"
+echo "3. Produktiv:"
+echo "   python scripts/hilda_runner.py"
+echo "   python scripts/tia_runner.py"
 echo ""
