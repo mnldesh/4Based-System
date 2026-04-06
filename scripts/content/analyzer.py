@@ -222,6 +222,13 @@ def _cleanup_frames(frames: list[tuple[Path, float]]) -> None:
 
 # ─── Image Analysis ───────────────────────────────────────────────────────────
 
+def _to_int(v, default: int = 5) -> int:
+    """Konvertiert beliebigen LLM-Wert sicher zu int (z.B. 'schlecht' → default)."""
+    try:
+        return int(float(v)) if v not in (None, "", False) else default
+    except (ValueError, TypeError):
+        return default
+
 def analyze_image(path: Path, client=None) -> Optional[ContentScore]:
     if path.suffix.lower() not in SUPPORTED_IMAGES:
         return None
@@ -239,9 +246,9 @@ def analyze_image(path: Path, client=None) -> Optional[ContentScore]:
     return ContentScore(
         file             = str(path),
         type             = "image",
-        score            = int(float(data.get("score", 5) or 5)),
-        production_score = int(float(data.get("production_score", 5) or 5)),
-        erotic_score     = int(float(data.get("erotic_score", 5) or 5)),
+        score            = _to_int(data.get("score")),
+        production_score = _to_int(data.get("production_score")),
+        erotic_score     = _to_int(data.get("erotic_score")),
         strengths        = data.get("strengths", []),
         weaknesses       = data.get("weaknesses", []),
         placement        = data.get("placement", "paid"),
@@ -330,9 +337,9 @@ def analyze_video(path: Path, client=None) -> Optional[ContentScore]:
     return ContentScore(
         file             = str(path),
         type             = "video",
-        score            = int(float(data.get("score", 5) or 5)),
-        production_score = int(float(data.get("production_score", 5) or 5)),
-        erotic_score     = int(float(data.get("erotic_score", 5) or 5)),
+        score            = _to_int(data.get("score")),
+        production_score = _to_int(data.get("production_score")),
+        erotic_score     = _to_int(data.get("erotic_score")),
         strengths        = data.get("strengths", []),
         weaknesses       = data.get("weaknesses", []),
         placement        = data.get("placement", "paid"),
@@ -355,14 +362,13 @@ def analyze_video(path: Path, client=None) -> Optional[ContentScore]:
 
 def _fallback_video_score(path: Path, frame_results: list[dict], info: dict) -> ContentScore:
     """Einfacher Durchschnitt wenn LLM-Summary fehlschlägt."""
-    def _n(v, default=5): return int(float(v or default))  # str/float/None → int
-    prod  = [_n(f.get("production_score", 5)) for f in frame_results]
-    ero   = [_n(f.get("erotic_score", 5))     for f in frame_results]
+    prod  = [_to_int(f.get("production_score")) for f in frame_results]
+    ero   = [_to_int(f.get("erotic_score"))     for f in frame_results]
     avg_p = round(sum(prod) / len(prod))
     avg_e = round(sum(ero)  / len(ero))
     score = round((avg_p + avg_e) / 2)
-    hilda = round(sum(_n(f.get("persona_fit", {}).get("hilda", 5)) for f in frame_results) / len(frame_results))
-    tia   = round(sum(_n(f.get("persona_fit", {}).get("tia",   5)) for f in frame_results) / len(frame_results))
+    hilda = round(sum(_to_int(f.get("persona_fit", {}).get("hilda")) for f in frame_results) / len(frame_results))
+    tia   = round(sum(_to_int(f.get("persona_fit", {}).get("tia"))   for f in frame_results) / len(frame_results))
 
     return ContentScore(
         file=str(path), type="video", score=score,
