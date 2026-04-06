@@ -9,20 +9,62 @@ Optimierungen:
 """
 
 import re
+import subprocess
 import time
 import base64
 import functools
 from pathlib import Path
 from typing import Optional
+from urllib.request import urlopen
+from urllib.error import URLError
 
 import openai
 
-OLLAMA_BASE   = "http://127.0.0.1:11434/v1"
-TEXT_MODEL    = "qwen3:14b"
-VISION_MODEL  = "llava:13b"
-API_TIMEOUT   = 60       # Sekunden pro API-Call
-MAX_RETRIES   = 3
+OLLAMA_BASE     = "http://127.0.0.1:11434/v1"
+OLLAMA_HEALTH   = "http://127.0.0.1:11434/api/tags"
+TEXT_MODEL      = "qwen3:14b"
+VISION_MODEL    = "llava:13b"
+API_TIMEOUT     = 60
+MAX_RETRIES     = 3
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
+
+
+def ensure_ollama(wait: int = 30) -> None:
+    """
+    Prüft ob Ollama läuft. Startet es automatisch wenn nicht.
+    Wartet bis zu `wait` Sekunden auf den Start.
+    Beendet das Programm wenn Ollama nicht gestartet werden kann.
+    """
+    def _is_up() -> bool:
+        try:
+            urlopen(OLLAMA_HEALTH, timeout=3)
+            return True
+        except Exception:
+            return False
+
+    if _is_up():
+        print("[OLLAMA] Läuft bereits ✓")
+        return
+
+    print("[OLLAMA] Nicht erreichbar — starte ollama serve...")
+    try:
+        subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        raise SystemExit("[OLLAMA] 'ollama' nicht gefunden. Bitte installieren: curl -fsSL https://ollama.ai/install.sh | sh")
+
+    for i in range(wait):
+        time.sleep(1)
+        if _is_up():
+            print(f"[OLLAMA] Gestartet nach {i+1}s ✓")
+            return
+        if i % 5 == 4:
+            print(f"[OLLAMA] Warte... ({i+1}/{wait}s)")
+
+    raise SystemExit(f"[OLLAMA] Konnte nach {wait}s nicht gestartet werden. Manuell prüfen: ollama serve")
 
 # ─── Regex — einmal kompiliert ────────────────────────────────────────────────
 _RE_THINK    = re.compile(r"<think>.*?</think>", re.DOTALL)

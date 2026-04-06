@@ -24,7 +24,7 @@ import openai
 from playwright.async_api import Page, BrowserContext
 
 from shared.personas import PERSONAS
-from shared.ai_client import make_client, clean_reply, TEXT_MODEL
+from shared.ai_client import make_client, clean_reply, TEXT_MODEL, ensure_ollama
 
 ROOT      = Path(__file__).resolve().parents[2]
 LOG_PATH  = ROOT / "logs" / "runner.jsonl"
@@ -601,6 +601,7 @@ async def run_account(
 ) -> None:
     from playwright.async_api import async_playwright
 
+    ensure_ollama()   # Ollama starten falls nicht aktiv
     client      = make_client()
     user_states = load_user_states(account.name)
     crash_delay = 20

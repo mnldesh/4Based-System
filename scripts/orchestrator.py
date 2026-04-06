@@ -37,7 +37,7 @@ ROOT        = Path(__file__).resolve().parent.parent   # 4based-system/
 SCRIPTS_DIR = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from shared.ai_client   import make_client
+from shared.ai_client   import make_client, ensure_ollama
 from content.analyzer   import (
     analyze_image, analyze_video,
     SUPPORTED_IMAGES, SUPPORTED_VIDEOS,
@@ -339,6 +339,7 @@ def main() -> None:
     for d in [ANALYSIS_DIR, PLANS_ROOT, RESEARCH_DIR, DOWNLOAD_DIR / "media"]:
         d.mkdir(parents=True, exist_ok=True)
 
+    ensure_ollama()   # Ollama starten falls nicht aktiv
     cfg    = load_config()
     client = make_client()   # einmal erzeugen, überall wiederverwenden
 
