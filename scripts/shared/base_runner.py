@@ -454,14 +454,14 @@ async def send_message(page: Page, text: str) -> None:
 
 async def navigate_back(page: Page) -> None:
     try:
-        # Direkte URL zuverlässiger als Nav-Klick
-        if "/messages" not in page.url:
-            await page.goto("https://4based.com/messages", wait_until="domcontentloaded")
-        else:
-            await page.go_back()
-        await page.wait_for_timeout(1000)
+        await page.click("text=Nachrichten", timeout=4000)
+        await page.wait_for_timeout(800)
     except Exception:
-        pass
+        try:
+            await page.go_back()
+            await page.wait_for_timeout(800)
+        except Exception:
+            pass
 
 
 async def scroll_down(page: Page) -> None:
@@ -710,8 +710,7 @@ async def run_account(
                     locale        = "de-DE",
                 )
                 page = await ctx.new_page()
-                # Direkt zur Messages-URL — zuverlässiger als Nav-Klick
-                await page.goto("https://4based.com/messages", wait_until="networkidle")
+                await page.goto("https://4based.com", wait_until="domcontentloaded")
                 await page.wait_for_timeout(3000)
                 await dismiss_consent(page)
 
@@ -719,12 +718,10 @@ async def run_account(
                 if "login" in page.url.lower() or await page.locator("input[type='email']").count():
                     raise RuntimeError("Session abgelaufen — bitte neu einloggen: python scripts/hilda_runner.py --save-session")
 
-                # Auf chat-overview warten — mit Fallback über JS-Scroll
-                try:
-                    await page.locator("chat-overview").wait_for(timeout=20000)
-                except Exception:
-                    # Falls Shadow DOM: prüfen ob ion-items schon da
-                    await page.wait_for_selector("chat-overview ion-item, ion-item.item", timeout=15000)
+                # Nachrichten-Tab klicken
+                await page.click("text=Nachrichten", timeout=10000)
+                await page.wait_for_timeout(2000)
+                await page.locator("chat-overview").wait_for(timeout=15000)
 
                 crash_delay = 20
 
