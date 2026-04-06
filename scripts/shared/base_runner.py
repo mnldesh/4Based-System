@@ -258,28 +258,28 @@ def get_ai_reply(
 
     # Strategie je nach User-Typ
     strategy = {
-        "NEU":       "Sei neugierig, stell eine persönliche Frage. Kein Sales.",
-        "KALT":      "Weck Interesse, sei geheimnisvoll. Kein direkter Sales.",
-        "KALT_HART": "Überrasche mit einer völlig unerwarteten Frage oder Aussage.",
-        "AKTIV":     "Löse seinen Einwand, mach ein konkretes Angebot mit Gutschein.",
-        "KAEUFER":   f"Schau dir den Verlauf an: Was hat er gekauft/geschrieben? Knüpf PERSÖNLICH daran an (z.B. 'Das letzte Set hat dir ja gefallen...'). Dann subtiler Upsell auf neuen Content. Gutschein: {persona.get('voucher_pct',30)}% falls passend.",
-        "PREMIUM":   "VIP-Behandlung, exklusiv, persönlich, mach ihn zum Stammkunden.",
-    }.get(user_type, "Antworte passend zum Kontext.")
+        "NEU":       "Stelle eine neugierige persönliche Frage basierend auf dem Verlauf. Kein Sales, kein Angebot.",
+        "KALT":      "Knüpf an etwas Konkretes aus dem Verlauf an. Sei geheimnisvoll, weck Interesse. Kein Sales.",
+        "KALT_HART": "Ignoriere Sales komplett. Stelle eine überraschend persönliche Frage die nichts mit Content zu tun hat.",
+        "AKTIV":     "Geh auf seine letzte Nachricht ein, dann mach ein sanftes Angebot. Nur Gutschein wenn es sich natürlich ergibt.",
+        "KAEUFER":   "Lies den Verlauf genau: Was hat er gesagt/gekauft? Nenn ein konkretes Detail daraus. Erst Connection, dann erst sanft neuen Content erwähnen.",
+        "PREMIUM":   "Sehr persönlich — bezieh dich auf ein spezifisches Detail aus dem Verlauf. Behandle ihn wie jemanden den du wirklich magst.",
+    }.get(user_type, "Antworte passend auf seine letzte Nachricht.")
 
     last_user_msg = user_msgs[-1] if user_msgs else "(keine)"
     last_own_str  = " | ".join(last_own) if last_own else "keine"
 
     prompt = (
-        f"SITUATION:\n"
-        f"- User: {username} | Typ: {user_type} | Umsatz: ${revenue:.0f} | "
-        f"Unbeantwortet seit: {trailing} Nachrichten\n"
-        f"- Strategie: {strategy}\n"
-        f"- Letzte User-Nachricht: {last_user_msg}\n"
-        f"- Deine letzten Nachrichten (NICHT wiederholen): {last_own_str}\n\n"
         f"CHATVERLAUF:\n{format_history(history)}\n\n"
-        f"AUFGABE: Schreib die nächste Nachricht von {persona['name']}.\n"
-        f"REGELN: Nur 1-2 Sätze. Kein Präfix wie 'Hilda:'. Kein Markdown. "
-        f"Direkt die Nachricht, sonst nichts."
+        f"KONTEXT: {username} | {user_type} | ${revenue:.0f} Umsatz | "
+        f"{trailing}x keine Antwort auf deine letzte Nachricht\n"
+        f"Seine letzte Nachricht: {last_user_msg}\n"
+        f"Deine letzten Nachrichten (nicht wiederholen!): {last_own_str}\n\n"
+        f"STRATEGIE: {strategy}\n\n"
+        f"STRENG VERBOTEN: generische Phrasen ('Oster-Deal', 'nur heute', 'exklusiv für dich'), "
+        f"Gutschein-Code direkt nennen ohne Kontext, gleiche Formulierung wie vorher.\n\n"
+        f"Schreib jetzt die nächste Nachricht von {persona['name']}. "
+        f"Nur 1-2 Sätze. Kein Präfix. Kein Markdown. Nur die Nachricht."
     )
 
     for attempt in range(1, AI_RETRIES + 1):
