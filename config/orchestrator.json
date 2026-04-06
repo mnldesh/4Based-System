@@ -1,0 +1,10 @@
+{
+  "drive_source_folder_id": "",
+  "drive_output_folder_id": "",
+  "min_content_score": 6,
+  "posts_per_day": 11,
+  "mass_msg_count": 4,
+  "paid_every": 5,
+  "personas": ["hilda", "tia"],
+  "research_every_days": 3
+}
