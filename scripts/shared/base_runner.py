@@ -710,11 +710,37 @@ async def run_account(
                 )
                 page = await ctx.new_page()
                 await page.goto("https://4based.com", wait_until="domcontentloaded")
-                await page.wait_for_timeout(2000)
+                await page.wait_for_timeout(3000)
                 await dismiss_consent(page)
-                await page.click(SEL["nav"], timeout=10000)
+
+                # Login prüfen — falls nicht eingeloggt → Session neu speichern
+                if "login" in page.url.lower() or await page.locator("input[type='email']").count():
+                    raise RuntimeError("Session abgelaufen — bitte neu einloggen: python scripts/hilda_runner.py --save-session")
+
+                # Navigation zur Nachrichten-Ansicht mit mehreren Fallbacks
+                nav_selectors = [
+                    "text=Nachrichten",
+                    "ion-tab-button:has-text('Nachrichten')",
+                    "a[href*='/messages']",
+                    "ion-icon[name='chatbubbles']",
+                    "[aria-label='Nachrichten']",
+                ]
+                nav_ok = False
+                for sel in nav_selectors:
+                    try:
+                        loc = page.locator(sel)
+                        if await loc.count():
+                            await loc.first.click(timeout=5000)
+                            nav_ok = True
+                            break
+                    except Exception:
+                        continue
+                if not nav_ok:
+                    # Direkt zur Chat-URL navigieren
+                    await page.goto("https://4based.com/messages", wait_until="domcontentloaded")
+
                 await page.wait_for_timeout(2000)
-                await page.locator("chat-overview").wait_for(timeout=10000)
+                await page.locator("chat-overview").wait_for(timeout=15000)
 
                 crash_delay = 20
 
