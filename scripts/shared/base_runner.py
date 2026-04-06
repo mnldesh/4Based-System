@@ -513,11 +513,7 @@ async def find_next_unprocessed(
                 continue
             if username not in processed:
                 return await read_item(page, i)
-            # Schon bearbeitet — hat der User inzwischen geantwortet?
-            chat = await read_item(page, i)
-            if chat and chat.preview != last_previews.get(username, ""):
-                print(f"  [NEU] {username} hat geantwortet → sofort bearbeiten")
-                return chat
+            # Bereits bearbeitet → in diesem Pass nicht nochmal
 
         if count <= prev_count:
             no_progress += 1
