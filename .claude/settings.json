@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python*)",
+      "Bash(git *)",
+      "Bash(pip *)",
+      "Bash(uvx *)",
+      "Bash(npx *)",
+      "Bash(cat *)",
+      "Bash(ls *)",
+      "Bash(mkdir *)",
+      "Bash(cp *)",
+      "Bash(mv *)"
+    ]
+  },
+  "enableAllProjectMcpServers": true
+}

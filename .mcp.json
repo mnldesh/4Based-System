@@ -1,10 +1,11 @@
 {
   "mcpServers": {
     "filesystem": {
-      "command": "uvx",
+      "command": "npx",
       "args": [
-        "mcp-server-filesystem",
-        "/home/kali/4based-system"
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/home/user/ideal-memory"
       ]
     },
     "git": {
@@ -12,7 +13,7 @@
       "args": [
         "mcp-server-git",
         "--repository",
-        "/home/kali/4based-system"
+        "/home/user/ideal-memory"
       ]
     },
     "sqlite": {
@@ -25,3 +26,4 @@
     }
   }
 }
+
