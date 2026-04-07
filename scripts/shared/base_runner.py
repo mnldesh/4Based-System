@@ -262,6 +262,117 @@ def get_or_classify(
     }
     return user_type
 
+# ─── Kaufabsicht-Erkennung ───────────────────────────────────────────────────
+
+# Schnell-Check: diese Keywords im letzten User-Text → sofort als Kaufabsicht werten
+_INTENT_KEYWORDS = [
+    "was kostet", "wie viel", "wieviel", "preis", "price", "kosten",
+    "kaufen", "bestellen", "haben möchte", "haben will", "will ich",
+    "möchte ich", "zeig mir", "schick mir", "send me", "how much",
+    "was bekomme", "was hast du", "was gibt es", "was bietest",
+    "video", "foto", "bild", "clip", "content", "pack", "set",
+    "custom", "privat", "exclusive", "exklusiv",
+]
+
+def _has_intent_keywords(text: str) -> bool:
+    t = text.lower()
+    return any(kw in t for kw in _INTENT_KEYWORDS)
+
+
+def detect_content_intent(
+    history:  list[Message],
+    client:   openai.OpenAI,
+    model:    str = TEXT_MODEL,
+) -> bool:
+    """
+    Gibt True zurück wenn der User nach Content, Preisen oder Angeboten fragt.
+    Erst Keyword-Schnellcheck, dann AI nur bei Unklarheit.
+    """
+    user_msgs = [m.text for m in history if m.role == "user"]
+    if not user_msgs:
+        return False
+
+    last_msg = user_msgs[-1]
+
+    # Schnellcheck — kein AI-Call nötig
+    if _has_intent_keywords(last_msg):
+        return True
+
+    # AI-Check nur wenn letzte 2 User-Nachrichten vorhanden (Kontext nötig)
+    if len(user_msgs) < 2:
+        return False
+
+    recent = "\n".join(f"User: {m}" for m in user_msgs[-3:])
+    prompt = (
+        f"Analysiere diese Nachrichten eines Users:\n{recent}\n\n"
+        f"Fragt der User nach Content, Fotos, Videos, Preisen oder möchte etwas kaufen/bestellen? "
+        f"Antworte NUR mit 'ja' oder 'nein'."
+    )
+    try:
+        resp = client.chat.completions.create(
+            model    = model,
+            max_tokens = 5,
+            timeout  = 15,
+            messages = [{"role": "user", "content": prompt}],
+        )
+        answer = (resp.choices[0].message.content or "").strip().lower()
+        return answer.startswith("ja")
+    except Exception:
+        return False
+
+
+def get_offer_reply(
+    history:      list[Message],
+    username:     str,
+    account_name: str,
+    revenue:      float,
+    client:       openai.OpenAI,
+    model:        str = TEXT_MODEL,
+) -> str:
+    """
+    Generiert eine persönliche Angebots-Nachricht wenn User Kaufabsicht zeigt.
+    Nennt Preis/Gutschein natürlich eingebettet, bezieht sich auf sein konkretes Interesse.
+    """
+    persona   = PERSONAS[account_name]
+    user_msgs = [m.text for m in history if m.role == "user"]
+    last_msg  = user_msgs[-1] if user_msgs else ""
+
+    prompt = (
+        f"CHATVERLAUF:\n{format_history(history)}\n\n"
+        f"Der User hat gerade gefragt/geschrieben: '{last_msg}'\n\n"
+        f"Er interessiert sich für Content, Fotos oder Videos — er fragt nach Preis oder Angebot.\n\n"
+        f"Schreib jetzt als {persona['name']} eine Antwort die:\n"
+        f"1. Auf seine konkrete Frage eingeht (was er sehen will, was er fragt)\n"
+        f"2. Kurz beschreibt was du anbietest (erotische Fotos/Videos, privater Content)\n"
+        f"3. Den Gutschein von {persona['voucher_pct']}% NATÜRLICH einbaust — nicht plump\n"
+        f"4. Ihn neugierig macht und zum Klicken/Kaufen animiert\n\n"
+        f"VERBOTEN: Preisangaben in Euro (plattformabhängig), zu lange Texte, Markdown.\n"
+        f"Max 3 Sätze. Kein Präfix. Nur die Nachricht. Verführerisch aber nicht verzweifelt."
+    )
+    try:
+        resp = client.chat.completions.create(
+            model      = model,
+            max_tokens = 200,
+            timeout    = 45,
+            messages   = [
+                {"role": "system", "content": persona["system"]},
+                {"role": "user",   "content": prompt},
+            ],
+        )
+        text = clean_reply(resp.choices[0].message.content or "")
+        if text:
+            return text
+    except Exception as e:
+        print(f"  [OFFER] Fehler: {e}")
+
+    # Fallback
+    return (
+        f"Ich hab Fotos und Videos die du noch nicht gesehen hast 😏 "
+        f"Mit meinem Gutschein ({persona['voucher_pct']}% Rabatt) lohnt es sich gerade besonders — "
+        f"schau mal in mein Profil 🔥"
+    )
+
+
 # ─── AI ───────────────────────────────────────────────────────────────────────
 
 def get_ai_reply(
@@ -673,13 +784,20 @@ async def process_chat(
         await navigate_back(page)
         return False
 
-    reply     = get_ai_reply(history, item.username, account.name, item.revenue, client, user_states)
     user_type = user_states.get(item.username, {}).get("type", "?")
     prefix    = "[DRY] " if dry_run else ""
-    print(f"  {user_type} | {prefix}{reply[:90]}")
 
-    log_event({"kind": "draft", "account": account.name, "username": item.username,
-               "reply": reply, "type": user_type, "dry_run": dry_run})
+    # Kaufabsicht erkennen → Angebots-Nachricht senden
+    if detect_content_intent(history, client):
+        reply = get_offer_reply(history, item.username, account.name, item.revenue, client)
+        print(f"  {user_type} | 💰OFFER | {prefix}{reply[:90]}")
+        log_event({"kind": "offer_draft", "account": account.name, "username": item.username,
+                   "reply": reply, "type": user_type, "dry_run": dry_run})
+    else:
+        reply = get_ai_reply(history, item.username, account.name, item.revenue, client, user_states)
+        print(f"  {user_type} | {prefix}{reply[:90]}")
+        log_event({"kind": "draft", "account": account.name, "username": item.username,
+                   "reply": reply, "type": user_type, "dry_run": dry_run})
 
     if not dry_run:
         try:
