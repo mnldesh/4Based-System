@@ -919,7 +919,7 @@ async def run_account(
 
                 # Login prüfen
                 if "login" in page.url.lower() or await page.locator("input[type='email']").count():
-                    raise RuntimeError("Session abgelaufen — bitte neu einloggen: python scripts/hilda_runner.py --save-session")
+                    raise RuntimeError(f"Session abgelaufen — bitte neu einloggen: python scripts/{account.name}_runner.py --save-session")
 
                 # Nachrichten-Tab klicken
                 await page.click("text=Nachrichten", timeout=10000)
