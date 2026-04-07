@@ -1,1 +1,5 @@
 .env
+config/*.env
+config/blacklist.json
+state/
+logs/

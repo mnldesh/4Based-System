@@ -26,9 +26,16 @@ from playwright.async_api import Page, BrowserContext
 from shared.personas import PERSONAS
 from shared.ai_client import make_client, clean_reply, TEXT_MODEL, ensure_ollama
 
-ROOT      = Path(__file__).resolve().parents[2]
-LOG_PATH  = ROOT / "logs" / "runner.jsonl"
-_log_lock = threading.Lock()
+ROOT            = Path(__file__).resolve().parents[2]
+LOG_PATH        = ROOT / "logs" / "runner.jsonl"
+_log_lock       = threading.Lock()
+_BLACKLIST_PATH = ROOT / "config" / "blacklist.json"
+
+
+def load_blacklist() -> set[str]:
+    """Liest config/blacklist.json → Set von Usernamen die nie angeschrieben werden."""
+    data = load_json(_BLACKLIST_PATH, [])
+    return {str(u).lower() for u in data if u}
 
 MAX_TRAILING          = 10
 PREMIUM_HISTORY_LIMIT = 100
@@ -608,6 +615,11 @@ async def process_chat(
     user_states: dict,
     hist_limit:  int = DEFAULT_HISTORY_LIMIT,
 ) -> bool:
+    # Blacklist-Check: gesperrte Accounts nie anschreiben
+    if item.username.lower() in load_blacklist():
+        print(f"  [SKIP] Blacklist: {item.username}")
+        return False
+
     # Cooldown-Check: letzte eigene Nachricht < 5h → überspringen
     last_sent = user_states.get(item.username, {}).get("last_sent_at")
     if last_sent:
