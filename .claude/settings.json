@@ -10,7 +10,12 @@
       "Bash(ls *)",
       "Bash(mkdir *)",
       "Bash(cp *)",
-      "Bash(mv *)"
+      "Bash(mv *)",
+      "Bash(find *)",
+      "Read(/home/kali/4based-system/*)"
+    ],
+    "additionalDirectories": [
+      "/home/kali/4based-system"
     ]
   },
   "enableAllProjectMcpServers": true
