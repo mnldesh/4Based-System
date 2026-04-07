@@ -1,6 +1,72 @@
 """
 personas.py — Persona-Definitionen für Hilda und Tia
+
+Referenz-Docs:
+  Falls ROOT/references/{name}-bot/*.md Dateien vorhanden sind,
+  werden diese beim Start geladen und als System-Prompt verwendet.
+  Prioritäts-Reihenfolge: SOUL.md → SYSTEM.md / {name}-system.md →
+  {name}-chatbot.md → MEMORY.md → PLAYBOOK.md → restliche *.md
 """
+
+from pathlib import Path
+
+# Lade-Reihenfolge der Referenz-Dateien (höchste Priorität zuerst)
+_REF_PRIORITY = [
+    "SOUL.md",
+    "SYSTEM.md",
+    "{name}-system.md",
+    "{name}-chatbot.md",
+    "MEMORY.md",
+    "PLAYBOOK.md",
+    "AGENTS.md",
+    "USER.md",
+    "OPERATOR.md",
+]
+
+
+def load_persona_docs(name: str, root: Path) -> str:
+    """
+    Lädt alle Markdown-Referenz-Dateien aus ROOT/references/{name}-bot/.
+    Gibt kombinierten Text zurück (mit Trennlinie zwischen Dateien).
+    Gibt leeren String zurück wenn Verzeichnis nicht existiert oder leer ist.
+
+    Die Dateien werden in definierter Prioritäts-Reihenfolge geladen,
+    unbekannte *.md Dateien alphabetisch dahinter.
+    """
+    refs_dir = root / "references" / f"{name}-bot"
+    if not refs_dir.is_dir():
+        return ""
+
+    loaded: list[tuple[str, str]] = []   # (filename, content)
+    seen:   set[str]              = set()
+
+    # Prioritätsdateien zuerst
+    for template in _REF_PRIORITY:
+        fname = template.replace("{name}", name)
+        path  = refs_dir / fname
+        if path.exists() and fname not in seen:
+            text = path.read_text(encoding="utf-8").strip()
+            if text:
+                loaded.append((fname, text))
+                seen.add(fname)
+
+    # Restliche .md Dateien alphabetisch
+    for path in sorted(refs_dir.glob("*.md")):
+        if path.name not in seen:
+            text = path.read_text(encoding="utf-8").strip()
+            if text:
+                loaded.append((path.name, text))
+                seen.add(path.name)
+
+    if not loaded:
+        return ""
+
+    parts = []
+    for fname, content in loaded:
+        parts.append(f"# [{fname}]\n{content}")
+
+    return "\n\n---\n\n".join(parts)
+
 
 PERSONAS: dict[str, dict] = {
     "hilda": {
