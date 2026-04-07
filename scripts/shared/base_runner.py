@@ -34,8 +34,8 @@ MAX_TRAILING          = 10
 PREMIUM_HISTORY_LIMIT = 100
 DEFAULT_HISTORY_LIMIT = 20
 SNAPSHOT_SIZE         = 30   # Top-N Chats im periodischen Check
-CHECK_MIN             = 300  # 5 min in Sekunden
-CHECK_MAX             = 480  # 8 min in Sekunden
+CHECK_MIN             = 5400  # 90 min in Sekunden
+CHECK_MAX             = 5400  # fix 90 min
 AI_RETRIES            = 3    # Versuche bevor Fallback-Nachricht
 
 # ─── Selectors ────────────────────────────────────────────────────────────────
@@ -757,20 +757,20 @@ async def run_account(
 
                     # Inbox von oben nach unten bearbeiten — kein Vorscannen
                     while True:
-                        # Periodischer Check alle 5–8 Minuten (zwischen Chats)
+                        chat = await find_next_unprocessed(page, processed_this_pass, last_previews)
+                        if not chat:
+                            break   # Ende der Inbox
+
+                        # Periodischer Check alle 90 Min — NACH aktuellem Chat, nicht mittendrin
                         now = asyncio.get_event_loop().time()
                         if now >= next_check:
-                            print(f"\n[{account.name.upper()}] ── Periodischer Check ──")
+                            print(f"\n[{account.name.upper()}] ── Periodischer Check (90min) ──")
                             snapshot = await do_periodic_check(
                                 page, snapshot, processed_this_pass,
                                 account, client, user_states, dry_run,
                             )
-                            next_check = now + random.randint(CHECK_MIN, CHECK_MAX)
-                            print(f"[{account.name.upper()}] ── Weiter ──\n")
-
-                        chat = await find_next_unprocessed(page, processed_this_pass, last_previews)
-                        if not chat:
-                            break   # Ende der Inbox
+                            next_check = now + CHECK_MIN
+                            print(f"[{account.name.upper()}] ── Weiter ab: {chat.username} ──\n")
 
                         label  = f"[${chat.revenue:.0f}]" if chat.revenue > 0 else "[NEU]"
                         cached = user_states.get(chat.username, {}).get("type", "?")
