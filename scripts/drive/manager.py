@@ -28,7 +28,7 @@ from typing import Generator, Optional
 
 UPLOAD_WORKERS = 4   # Parallele Upload-Threads
 
-ROOT                = Path(__file__).resolve().parents[2]
+ROOT                = Path("/home/kali/4based-system")
 CREDENTIALS_PATH    = ROOT / "config" / "google_service_account.json"
 OAUTH_CLIENT_PATH   = ROOT / "config" / "google_oauth_client.json"
 OAUTH_TOKEN_PATH    = ROOT / "config" / "google_oauth_token.json"

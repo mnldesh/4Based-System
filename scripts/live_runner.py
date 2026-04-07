@@ -17,7 +17,7 @@ from typing import Optional
 import openai
 from playwright.async_api import async_playwright, Page, BrowserContext
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path("/home/kali/4based-system")
 LOG_PATH = ROOT / "logs" / "runner.jsonl"
 
 # ─── Selectors ────────────────────────────────────────────────────────────────

@@ -33,9 +33,10 @@ from datetime import datetime
 from pathlib import Path
 
 # sys.path so setzen dass "shared", "content", "drive" direkt importierbar sind
-ROOT        = Path(__file__).resolve().parent.parent   # 4based-system/
+ROOT        = Path("/home/kali/4based-system")
 SCRIPTS_DIR = ROOT / "scripts"
-sys.path.insert(0, str(SCRIPTS_DIR))
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 
 from shared.ai_client   import make_client, ensure_ollama
 from content.analyzer   import (

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 # Sicherstellen dass scripts/ im Suchpfad ist (auch bei direktem Aufruf)
-_SCRIPTS = Path(__file__).resolve().parent.parent
+_SCRIPTS = Path("/home/kali/4based-system/scripts")
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
@@ -30,7 +30,7 @@ except ImportError:
 from shared.ai_client import make_client, chat, parse_json_from_response
 from shared.personas import PERSONAS
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path("/home/kali/4based-system")
 
 # ─── Search queries ───────────────────────────────────────────────────────────
 

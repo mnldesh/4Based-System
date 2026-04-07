@@ -26,7 +26,7 @@ from playwright.async_api import Page, BrowserContext
 from shared.personas import PERSONAS
 from shared.ai_client import make_client, clean_reply, TEXT_MODEL, ensure_ollama
 
-ROOT            = Path(__file__).resolve().parents[2]
+ROOT            = Path("/home/kali/4based-system")
 LOG_PATH        = ROOT / "logs" / "runner.jsonl"
 _log_lock       = threading.Lock()
 _BLACKLIST_PATH = ROOT / "config" / "blacklist.json"

@@ -12,6 +12,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional
 
+ROOT           = Path("/home/kali/4based-system")
 FRAME_WORKERS  = 4   # Parallele Vision-Calls pro Video
 FOLDER_WORKERS = 4   # Parallele Datei-Analysen im Ordner
 
