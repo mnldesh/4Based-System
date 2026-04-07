@@ -24,7 +24,7 @@ import openai
 from playwright.async_api import Page, BrowserContext
 
 from shared.personas import PERSONAS
-from shared.ai_client import make_client, clean_reply, TEXT_MODEL, ensure_ollama
+from shared.ai_client import make_client, clean_reply, is_reply_usable, TEXT_MODEL, ensure_ollama
 from shared.intent_analyzer import analyze_chat, ChatAnalysis
 from shared.config import ROOT
 LOG_PATH        = ROOT / "logs" / "runner.jsonl"
@@ -505,7 +505,99 @@ def get_offer_reply(
     return get_ai_reply(history, username, account_name, revenue, client, user_states, model)
 
 
+# ─── Reengage-Opener ─────────────────────────────────────────────────────────
+# Für User OHNE Nachricht: keine freie AI-Generation, sondern
+# persona-passende Vorlagen die per AI nur leicht variiert werden.
+
+_REENGAGE_OPENERS = {
+    "hilda": [
+        "Ich lieg gerade hier und mir ist langweilig.. magst du mir Gesellschaft leisten?",
+        "Hab gerade was Neues fotografiert und musste an dich denken..",
+        "Ich zieh mich gerade um und frag mich, was du wohl mögen würdest..",
+        "Mir ist gerade so warm.. ablenkung wäre schön 🥺",
+        "Irgendwie hab ich Lust auf ein Gespräch das nicht langweilig ist.. bist du so einer?",
+        "Ich hab mich gefragt ob du eher der süße oder der freche Typ bist..",
+        "Liegt grad jemand auch allein im Bett und kann nicht schlafen? 🙈",
+        "Sag mal ehrlich.. was hat dich hergebracht?",
+        "Ich hab heute was gedreht das mich selbst überrascht hat..",
+        "Darf ich dir was Persönliches fragen? Nur wenn du dich traust 😏",
+        "Ich war gerade duschen und hab über was nachgedacht.. darf ich?",
+        "Du wirkst wie jemand der mehr will als nur schauen.. stimmt das?",
+    ],
+    "tia": [
+        "Hey, ich lieg hier halbnackt rum und mir ist fad.. reden wir? 😏",
+        "Sag mal, bist du der Typ der nur guckt oder traust du dich auch zu schreiben?",
+        "Ich hab heute ein Video gedreht bei dem ich an dich gedacht hab..",
+        "Mir ist heiß und ich brauch Ablenkung.. bist du dabei? 🔥",
+        "Ich wette du bist neugieriger als du zugibst 😜",
+        "Hand aufs Herz — was würdest du tun wenn ich jetzt neben dir liege?",
+        "Ich such jemanden der mich heute Abend unterhält.. bist du lustig? 😏",
+        "Gerade erst aufgewacht und fühl mich so.. wild. Kennst du das?",
+        "Du hast was an dir das mich neugierig macht.. sag mir was es ist",
+        "Ich hab Lust auf ein ehrliches Gespräch.. ohne Spielchen. Oder doch mit? 😈",
+        "Ich scroll hier durch und du stichst raus.. warum bist du hier?",
+        "Weißt du was ich gerade trage? Rate mal 🙃",
+    ],
+}
+
+
+def _get_reengage_reply(
+    history:      list[Message],
+    account_name: str,
+    client:       openai.OpenAI,
+    model:        str = TEXT_MODEL,
+) -> str:
+    """
+    Wählt einen Reengage-Opener und variiert ihn leicht per AI.
+    Vermeidet Wiederholung der letzten eigenen Nachrichten.
+    """
+    persona = PERSONAS[account_name]
+    openers = _REENGAGE_OPENERS.get(account_name, _REENGAGE_OPENERS["tia"])
+    last_own = [m.text for m in history if m.role == "me"][-5:]
+
+    # Opener wählen der nicht zu ähnlich zu den letzten eigenen ist
+    available = [o for o in openers if not any(o[:20] in sent for sent in last_own)]
+    if not available:
+        available = openers
+    opener = random.choice(available)
+
+    # Leichte Variation per AI — aber der Opener gibt die Richtung vor
+    prompt = (
+        f"VORLAGE: '{opener}'\n\n"
+        f"Formuliere diese Nachricht leicht um — gleicher Inhalt, gleiche Länge, "
+        f"gleicher Ton, aber andere Wortwahl. Schreib als {persona['name']}.\n"
+        f"VERBOTEN: 'Natürlich', 'Ich würde mich freuen', Username, Markdown, "
+        f"mehr als 2 Sätze, Chinesisch, Englisch.\n"
+        f"Nur die umformulierte Nachricht, kein Präfix."
+    )
+
+    try:
+        resp = client.chat.completions.create(
+            model=model, max_tokens=120, timeout=20,
+            messages=[
+                {"role": "system", "content": persona["system"]},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        text = clean_reply(resp.choices[0].message.content or "")
+        if is_reply_usable(text):
+            return text
+    except Exception:
+        pass
+
+    # Fallback: Opener direkt verwenden (ist immer brauchbar)
+    return opener
+
+
 # ─── AI ───────────────────────────────────────────────────────────────────────
+
+# Wörter die NICHT am Satzanfang stehen dürfen (zu generisch/roboterhaft)
+_BANNED_STARTS = [
+    "natürlich", "ich würde mich freuen", "es freut mich",
+    "ich verstehe", "ich bin wirklich", "ich merke",
+    "stimmt,", "klar,", "okay,",
+]
+
 
 def get_ai_reply(
     history:      list[Message],
@@ -520,6 +612,7 @@ def get_ai_reply(
     """
     Generiert immer eine Antwort. Retry bis AI_RETRIES mal.
     Nutzt ChatAnalysis als Steuerung (wenn vorhanden).
+    Bei reengage ohne User-Nachricht → Opener-System statt freie Generation.
     """
     persona   = PERSONAS[account_name]
     user_type = get_or_classify(username, history, revenue, user_states)
@@ -530,7 +623,12 @@ def get_ai_reply(
     if analysis is None:
         analysis = analyze_chat(history, username, user_type, revenue, trailing, client, model)
 
+    # Reengage ohne User-Nachricht → Opener-System (kein Halluzinationsrisiko)
     user_msgs = [m.text for m in history if m.role == "user"]
+    if analysis.intent == "reengage" and not user_msgs:
+        print(f"  [OPENER]", end=" ")
+        return _get_reengage_reply(history, account_name, client, model)
+
     last_own  = [m.text for m in history if m.role == "me"][-3:]
 
     last_user_msg = user_msgs[-1] if user_msgs else "(keine)"
@@ -544,6 +642,8 @@ def get_ai_reply(
         for m in recent_history
     )
 
+    banned_list = ", ".join(f"'{w}'" for w in _BANNED_STARTS)
+
     prompt = (
         f"LETZTER VERLAUF:\n{recent_formatted}\n"
         f"{prefs_block}\n"
@@ -556,8 +656,10 @@ def get_ai_reply(
         f"- Dein Ton ist: {analysis.persona_mode}\n"
         f"- Dein Ziel ist: {analysis.reply_goal}\n"
         f"- Erfinde NICHTS was nicht im Verlauf steht\n"
-        f"- VERBOTEN: gleiche Formulierung wie vorher, roboterhafte Sprache, "
-        f"generische Phrasen, Username am Satzanfang\n\n"
+        f"- Schreib erotisch, körperlich, sinnlich — du bist eine Creatorin, keine Beraterin\n"
+        f"- VERBOTEN: {banned_list}, Username am Satzanfang, "
+        f"roboterhafte Sprache, generische Phrasen, Chinesisch, Englisch\n"
+        f"- Sprache: NUR Deutsch. Kein einziges nicht-deutsches Wort.\n\n"
         f"Schreib jetzt die nächste Nachricht von {persona['name']}. "
         f"1-2 Sätze. Kein Präfix. Kein Markdown. Nur die Nachricht."
     )
@@ -566,7 +668,7 @@ def get_ai_reply(
         try:
             resp = client.chat.completions.create(
                 model      = model,
-                max_tokens = 600,
+                max_tokens = 200,
                 timeout    = 45,
                 messages   = [
                     {"role": "system", "content": persona["system"]},
@@ -574,9 +676,15 @@ def get_ai_reply(
                 ],
             )
             text = clean_reply(resp.choices[0].message.content or "")
-            if text:
-                return text
-            print(f"  [AI] Leere Antwort (Versuch {attempt}/{AI_RETRIES})")
+            if not is_reply_usable(text):
+                print(f"  [AI] Unbrauchbar nach Clean (Versuch {attempt}/{AI_RETRIES})")
+                continue
+            # Gebannte Anfänge prüfen
+            lower = text.lower()
+            if any(lower.startswith(b) for b in _BANNED_STARTS):
+                print(f"  [AI] Gebannter Anfang '{text[:20]}...' (Versuch {attempt}/{AI_RETRIES})")
+                continue
+            return text
         except openai.APIConnectionError as e:
             print(f"  [AI] Verbindung fehlgeschlagen (Versuch {attempt}/{AI_RETRIES}): {e}")
         except openai.APIStatusError as e:
