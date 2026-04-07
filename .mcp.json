@@ -5,7 +5,7 @@
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "/home/user/ideal-memory"
+        "/home/kali/4based-system"
       ]
     },
     "git": {
@@ -13,7 +13,7 @@
       "args": [
         "mcp-server-git",
         "--repository",
-        "/home/user/ideal-memory"
+        "/home/kali/4based-system"
       ]
     },
     "sqlite": {
