@@ -23,7 +23,7 @@ from typing import Optional
 import openai
 from playwright.async_api import Page, BrowserContext
 
-from shared.personas import PERSONAS, load_persona_docs
+from shared.personas import PERSONAS
 from shared.ai_client import make_client, clean_reply, TEXT_MODEL, ensure_ollama
 from shared.config import ROOT
 LOG_PATH        = ROOT / "logs" / "runner.jsonl"
@@ -975,11 +975,6 @@ async def run_account(
     client      = make_client()
     user_states = load_user_states(account.name)
 
-    # Referenz-Docs laden falls vorhanden (überschreibt hardcoded system-prompt)
-    ref_docs = load_persona_docs(account.name, ROOT)
-    if ref_docs:
-        PERSONAS[account.name]["system"] = ref_docs
-        print(f"[{account.name.upper()}] Referenz-Docs geladen aus references/{account.name}-bot/")
     crash_delay = 20
 
     print(f"[{account.name.upper()}] Start {'(headless)' if headless else '(Browser sichtbar)'}")
