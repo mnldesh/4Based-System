@@ -304,13 +304,17 @@ def get_ai_reply(
         f"Seine letzte Nachricht: {last_user_msg}\n"
         f"Deine letzten Nachrichten (nicht wiederholen!): {last_own_str}\n\n"
         f"STRATEGIE: {strategy}\n\n"
-        f"STRENG VERBOTEN: generische Phrasen ('Oster-Deal', 'nur heute', 'exklusiv für dich'), "
-        f"Gutschein-Code direkt nennen ohne Kontext, gleiche Formulierung wie vorher, "
-        f"Formulierungen wie 'Ich habe gehört...' oder 'Ich weiß dass du...' — "
-        f"stattdessen natürlich klingen: 'ich hab mir gemerkt dass du...', 'da du ja ... bist', "
-        f"'weil du letztes Mal...' — als ob du dich wirklich erinnerst.\n\n"
+        f"REGELN FÜR DEN VERLAUF-BEZUG:\n"
+        f"- Greif konkret auf etwas aus dem CHATVERLAUF zurück (seinen Job, ein Thema das er erwähnte, "
+        f"etwas was er gekauft hat, wie er geschrieben hat)\n"
+        f"- Formuliere es jedes Mal ANDERS — nie zweimal dieselbe Einleitung\n"
+        f"- VERBOTEN: 'Ich hab mir gemerkt', 'Ich habe gehört', 'Ich weiß dass du', 'Ich dachte an dich' "
+        f"als Einstieg — das klingt automatisiert\n"
+        f"- Stattdessen: direkt ins Thema einsteigen, den Verlauf-Bezug einweben ohne es anzukündigen\n\n"
+        f"STRENG VERBOTEN: generische Phrasen, Gutschein-Code ohne Kontext, "
+        f"gleiche Formulierung wie in deinen letzten Nachrichten, steife oder roboterhafte Sprache.\n\n"
         f"Schreib jetzt die nächste Nachricht von {persona['name']}. "
-        f"Nur 1-2 Sätze. Kein Präfix. Kein Markdown. Nur die Nachricht."
+        f"1-2 Sätze. Kein Präfix. Kein Markdown. Nur die Nachricht. Erotisch, verführerisch, persönlich."
     )
 
     for attempt in range(1, AI_RETRIES + 1):
