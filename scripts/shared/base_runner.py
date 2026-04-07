@@ -688,7 +688,8 @@ async def process_chat(
             # Sendezeitpunkt merken → in nächsten Pässen überspringen
             if item.username not in user_states:
                 user_states[item.username] = {}
-            user_states[item.username]["last_sent_at"] = now_utc().isoformat()
+            user_states[item.username]["last_sent_at"]      = now_utc().isoformat()
+            user_states[item.username]["last_sent_preview"] = item.preview
             await asyncio.sleep(2)
         except Exception as e:
             print(f"  [SEND ERROR] {e}")
@@ -764,10 +765,14 @@ async def run_account(
                 while True:
                     pass_num += 1
                     sent = skip = 0
+                    reply_only = pass_num > 1   # Ab Pass 2: nur Antwortende
                     processed_this_pass: set[str] = _load_progress()
                     last_previews:       dict[str, str] = {}
 
-                    print(f"\n[{account.name.upper()}] PASS {pass_num} | {now_utc().strftime('%H:%M:%S')}")
+                    if reply_only:
+                        print(f"\n[{account.name.upper()}] PASS {pass_num} | {now_utc().strftime('%H:%M:%S')} | NUR ANTWORTEN")
+                    else:
+                        print(f"\n[{account.name.upper()}] PASS {pass_num} | {now_utc().strftime('%H:%M:%S')}")
 
                     # Inbox von oben nach unten durcharbeiten — kein Unterbrechen
                     while True:
@@ -775,9 +780,19 @@ async def run_account(
                         if not chat:
                             break   # Ende der Inbox — alle Chats bearbeitet
 
+                        # Ab Pass 2: überspringen wenn User nicht geantwortet hat
+                        if reply_only:
+                            last_sent_preview = user_states.get(chat.username, {}).get("last_sent_preview")
+                            if last_sent_preview is not None and chat.preview == last_sent_preview:
+                                processed_this_pass.add(chat.username)
+                                _save_progress(processed_this_pass)
+                                skip += 1
+                                continue   # Keine Antwort → überspringen
+
                         label  = f"[${chat.revenue:.0f}]" if chat.revenue > 0 else "[NEU]"
                         cached = user_states.get(chat.username, {}).get("type", "?")
-                        print(f"  → {chat.username} {label} [{cached}]", end=" ", flush=True)
+                        marker = "↩" if reply_only else "→"
+                        print(f"  {marker} {chat.username} {label} [{cached}]", end=" ", flush=True)
 
                         limit = PREMIUM_HISTORY_LIMIT if chat.revenue > 20 else DEFAULT_HISTORY_LIMIT
                         ok    = await process_chat(page, chat, account, client, dry_run, user_states, limit)
