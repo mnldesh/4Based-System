@@ -3,3 +3,6 @@ config/*.env
 config/blacklist.json
 state/
 logs/
+__pycache__/
+*.pyc
+*.pyo
