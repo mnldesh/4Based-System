@@ -4,22 +4,41 @@ personas.py — Persona-Definitionen für Hilda und Tia
 Referenz-Docs:
   Falls ROOT/references/{name}-bot/*.md Dateien vorhanden sind,
   werden diese beim Start geladen und als System-Prompt verwendet.
-  Prioritäts-Reihenfolge: SOUL.md → SYSTEM.md / {name}-system.md →
-  {name}-chatbot.md → MEMORY.md → PLAYBOOK.md → restliche *.md
+  Truth (default): {name}-system.md → PLAYBOOK.md → MEMORY.md (optional per runner)
+  Supporting (optional via env LOAD_SUPPORTING_DOCS=1): {name}-chatbot.md, SOUL.md, OPERATOR.md, AGENTS.md, USER.md
 """
 
+import os
 from pathlib import Path
 
-# Lade-Reihenfolge der Referenz-Dateien (höchste Priorität zuerst)
-_REF_PRIORITY = [
-    "SOUL.md",
-    "SYSTEM.md",
+# Lade-Reihenfolge der Referenz-Dateien (Truth first; supporting optional)
+# Default: truth only to avoid mixing/conflicts.
+_REF_TRUTH = [
     "{name}-system.md",
-    "{name}-chatbot.md",
-    "MEMORY.md",
     "PLAYBOOK.md",
+    "MEMORY.md",
+]
+
+_REF_SUPPORTING = [
+    "{name}-chatbot.md",
+    "SOUL.md",
+    "OPERATOR.md",
     "AGENTS.md",
     "USER.md",
+]
+
+
+# --- Reference docs loader (truth-only by default) ---
+
+TRUTH_DOCS_ORDER = [
+    "{name}-system.md",  # e.g. hilda-system.md / tia-system.md
+    "PLAYBOOK.md",
+    "MEMORY.md",
+]
+
+SUPPORTING_DOCS_ORDER = [
+    "{name}-chatbot.md",
+    "SOUL.md",
     "OPERATOR.md",
 ]
 
@@ -40,8 +59,8 @@ def load_persona_docs(name: str, root: Path) -> str:
     loaded: list[tuple[str, str]] = []   # (filename, content)
     seen:   set[str]              = set()
 
-    # Prioritätsdateien zuerst
-    for template in _REF_PRIORITY:
+    # Truth docs first (supporting docs are not loaded by default)
+    for template in _REF_TRUTH:
         fname = template.replace("{name}", name)
         path  = refs_dir / fname
         if path.exists() and fname not in seen:
@@ -50,13 +69,17 @@ def load_persona_docs(name: str, root: Path) -> str:
                 loaded.append((fname, text))
                 seen.add(fname)
 
-    # Restliche .md Dateien alphabetisch
-    for path in sorted(refs_dir.glob("*.md")):
-        if path.name not in seen:
-            text = path.read_text(encoding="utf-8").strip()
-            if text:
-                loaded.append((path.name, text))
-                seen.add(path.name)
+    # Supporting docs (only if explicitly enabled via env var)
+    enable_supporting = (os.environ.get("LOAD_SUPPORTING_DOCS", "").strip().lower() in {"1", "true", "yes"})
+    if enable_supporting:
+        for template in _REF_SUPPORTING:
+            fname = template.replace("{name}", name)
+            path  = refs_dir / fname
+            if path.exists() and fname not in seen:
+                text = path.read_text(encoding="utf-8").strip()
+                if text:
+                    loaded.append((fname, text))
+                    seen.add(fname)
 
     if not loaded:
         return ""
