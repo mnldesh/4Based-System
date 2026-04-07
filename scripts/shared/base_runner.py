@@ -34,8 +34,7 @@ MAX_TRAILING          = 10
 PREMIUM_HISTORY_LIMIT = 100
 DEFAULT_HISTORY_LIMIT = 20
 SNAPSHOT_SIZE         = 30   # Top-N Chats im periodischen Check
-CHECK_MIN             = 5400  # 90 min in Sekunden
-CHECK_MAX             = 5400  # fix 90 min
+PASS_INTERVAL         = 5400  # 90 min zwischen Pässen
 AI_RETRIES            = 3    # Versuche bevor Fallback-Nachricht
 
 # ─── Selectors ────────────────────────────────────────────────────────────────
@@ -741,9 +740,8 @@ async def run_account(
                         progress_file.unlink()
 
                 # Einmaliger Snapshot der Top-30 als Baseline
-                snapshot   = await read_snapshot(page)
-                next_check = asyncio.get_event_loop().time() + random.randint(CHECK_MIN, CHECK_MAX)
-                pass_num   = 0
+                snapshot = await read_snapshot(page)
+                pass_num = 0
 
                 print(f"[{account.name.upper()}] Snapshot: {len(snapshot)} Chats | Starte direkt")
 
@@ -755,22 +753,11 @@ async def run_account(
 
                     print(f"\n[{account.name.upper()}] PASS {pass_num} | {now_utc().strftime('%H:%M:%S')}")
 
-                    # Inbox von oben nach unten bearbeiten — kein Vorscannen
+                    # Inbox von oben nach unten durcharbeiten — kein Unterbrechen
                     while True:
                         chat = await find_next_unprocessed(page, processed_this_pass, last_previews)
                         if not chat:
-                            break   # Ende der Inbox
-
-                        # Periodischer Check alle 90 Min — NACH aktuellem Chat, nicht mittendrin
-                        now = asyncio.get_event_loop().time()
-                        if now >= next_check:
-                            print(f"\n[{account.name.upper()}] ── Periodischer Check (90min) ──")
-                            snapshot = await do_periodic_check(
-                                page, snapshot, processed_this_pass,
-                                account, client, user_states, dry_run,
-                            )
-                            next_check = now + CHECK_MIN
-                            print(f"[{account.name.upper()}] ── Weiter ab: {chat.username} ──\n")
+                            break   # Ende der Inbox — alle Chats bearbeitet
 
                         label  = f"[${chat.revenue:.0f}]" if chat.revenue > 0 else "[NEU]"
                         cached = user_states.get(chat.username, {}).get("type", "?")
@@ -802,21 +789,11 @@ async def run_account(
                     if once:
                         break
 
-                    # Auf neue Nachrichten warten (max 3× 30s = 90s)
-                    found_new = False
-                    for attempt in range(3):
-                        await asyncio.sleep(30)
-                        new_snap = await read_snapshot(page)
-                        changed  = {u for u, p in new_snap.items() if p != snapshot.get(u, "")}
-                        if changed:
-                            print(f"[{account.name.upper()}] {len(changed)} neue Nachrichten → neuer Pass")
-                            snapshot  = new_snap
-                            found_new = True
-                            break
-                        print(f"[{account.name.upper()}] Warte... ({attempt+1}/3)")
-
-                    if not found_new:
-                        snapshot = await read_snapshot(page)   # Snapshot aktualisieren
+                    # 90 Minuten warten bis zum nächsten Pass
+                    next_run = now_utc().strftime("%H:%M")
+                    print(f"[{account.name.upper()}] Warte 90 Min — nächster Pass um ca. {next_run}")
+                    await asyncio.sleep(PASS_INTERVAL)
+                    snapshot = await read_snapshot(page)
 
                 await ctx.close()
                 await browser.close()
