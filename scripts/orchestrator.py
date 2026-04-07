@@ -60,7 +60,7 @@ from drive.manager      import (
 DATA_DIR     = ROOT / "data"
 ANALYSIS_DIR = DATA_DIR / "analysis"
 RESEARCH_DIR = DATA_DIR / "research"
-PLANS_ROOT   = DATA_DIR / "Plan für die nächsten Tage"
+PLANS_ROOT   = Path("/mnt/Arbeit/Planung")
 
 DAYS = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"]
 
