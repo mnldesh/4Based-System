@@ -262,9 +262,72 @@ def get_or_classify(
     }
     return user_type
 
+# ─── User-Präferenzen ────────────────────────────────────────────────────────
+
+def extract_user_prefs(
+    history: list[Message],
+    client:  openai.OpenAI,
+    model:   str = TEXT_MODEL,
+) -> dict:
+    """
+    Extrahiert Vorlieben, Interessen und Persönlichkeit des Users aus dem Chatverlauf.
+    Gibt ein Dict zurück das in user_states gespeichert wird.
+    Nur aufrufen wenn genug User-Nachrichten vorhanden (≥ 2).
+    """
+    user_msgs = [m.text for m in history if m.role == "user"]
+    if len(user_msgs) < 2:
+        return {}
+
+    verlauf = format_history(history)
+    prompt = (
+        f"Analysiere diesen Chatverlauf und extrahiere Infos über den User:\n\n"
+        f"{verlauf}\n\n"
+        f"Antworte NUR mit validem JSON:\n"
+        f'{{\n'
+        f'  "beruf": "<Beruf/Job falls erwähnt, sonst null>",\n'
+        f'  "interessen": ["<interesse1>", "<interesse2>"],\n'
+        f'  "content_wunsch": "<was er konkret sehen/haben möchte, falls erwähnt>",\n'
+        f'  "kommunikation": "<wie er schreibt: kurz/lang, direkt/schüchtern, frech/höflich>",\n'
+        f'  "persoenlichkeit": "<kurze Beschreibung in 1 Satz>",\n'
+        f'  "besonderheiten": "<besondere Details die er erwähnte, zB Hobbys, Wohnort, etc>"\n'
+        f'}}'
+    )
+    try:
+        resp = client.chat.completions.create(
+            model      = model,
+            max_tokens = 200,
+            timeout    = 20,
+            messages   = [{"role": "user", "content": prompt}],
+        )
+        from shared.ai_client import parse_json_from_response
+        data = parse_json_from_response(resp.choices[0].message.content or "")
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _format_prefs(prefs: dict) -> str:
+    """Formatiert gespeicherte Präferenzen als lesbaren String für Prompts."""
+    if not prefs:
+        return ""
+    parts = []
+    if prefs.get("beruf"):
+        parts.append(f"Beruf: {prefs['beruf']}")
+    if prefs.get("interessen"):
+        parts.append(f"Interessen: {', '.join(prefs['interessen'])}")
+    if prefs.get("content_wunsch"):
+        parts.append(f"Content-Wunsch: {prefs['content_wunsch']}")
+    if prefs.get("kommunikation"):
+        parts.append(f"Kommunikationsstil: {prefs['kommunikation']}")
+    if prefs.get("persoenlichkeit"):
+        parts.append(f"Persönlichkeit: {prefs['persoenlichkeit']}")
+    if prefs.get("besonderheiten"):
+        parts.append(f"Besonderheiten: {prefs['besonderheiten']}")
+    return "\n".join(parts)
+
+
 # ─── Kaufabsicht-Erkennung ───────────────────────────────────────────────────
 
-# Schnell-Check: diese Keywords im letzten User-Text → sofort als Kaufabsicht werten
 _INTENT_KEYWORDS = [
     "was kostet", "wie viel", "wieviel", "preis", "price", "kosten",
     "kaufen", "bestellen", "haben möchte", "haben will", "will ich",
@@ -280,43 +343,30 @@ def _has_intent_keywords(text: str) -> bool:
 
 
 def detect_content_intent(
-    history:  list[Message],
-    client:   openai.OpenAI,
-    model:    str = TEXT_MODEL,
+    history: list[Message],
+    client:  openai.OpenAI,
+    model:   str = TEXT_MODEL,
 ) -> bool:
-    """
-    Gibt True zurück wenn der User nach Content, Preisen oder Angeboten fragt.
-    Erst Keyword-Schnellcheck, dann AI nur bei Unklarheit.
-    """
+    """Keyword-Schnellcheck, dann AI-Check bei Unklarheit."""
     user_msgs = [m.text for m in history if m.role == "user"]
     if not user_msgs:
         return False
-
-    last_msg = user_msgs[-1]
-
-    # Schnellcheck — kein AI-Call nötig
-    if _has_intent_keywords(last_msg):
+    if _has_intent_keywords(user_msgs[-1]):
         return True
-
-    # AI-Check nur wenn letzte 2 User-Nachrichten vorhanden (Kontext nötig)
     if len(user_msgs) < 2:
         return False
-
     recent = "\n".join(f"User: {m}" for m in user_msgs[-3:])
     prompt = (
-        f"Analysiere diese Nachrichten eines Users:\n{recent}\n\n"
-        f"Fragt der User nach Content, Fotos, Videos, Preisen oder möchte etwas kaufen/bestellen? "
-        f"Antworte NUR mit 'ja' oder 'nein'."
+        f"Nachrichten:\n{recent}\n\n"
+        f"Fragt der User nach Content, Fotos, Videos, Preisen oder möchte kaufen? "
+        f"Nur 'ja' oder 'nein'."
     )
     try:
         resp = client.chat.completions.create(
-            model    = model,
-            max_tokens = 5,
-            timeout  = 15,
-            messages = [{"role": "user", "content": prompt}],
+            model=model, max_tokens=5, timeout=15,
+            messages=[{"role": "user", "content": prompt}],
         )
-        answer = (resp.choices[0].message.content or "").strip().lower()
-        return answer.startswith("ja")
+        return (resp.choices[0].message.content or "").strip().lower().startswith("ja")
     except Exception:
         return False
 
@@ -327,50 +377,58 @@ def get_offer_reply(
     account_name: str,
     revenue:      float,
     client:       openai.OpenAI,
+    user_states:  dict,
     model:        str = TEXT_MODEL,
 ) -> str:
     """
-    Generiert eine persönliche Angebots-Nachricht wenn User Kaufabsicht zeigt.
-    Nennt Preis/Gutschein natürlich eingebettet, bezieht sich auf sein konkretes Interesse.
+    Vollständig KI-generierte Angebots-Nachricht — kein Template.
+    Berücksichtigt Chatverlauf, gespeicherte Vorlieben und konkreten Content-Wunsch.
     """
     persona   = PERSONAS[account_name]
     user_msgs = [m.text for m in history if m.role == "user"]
     last_msg  = user_msgs[-1] if user_msgs else ""
+    prefs     = user_states.get(username, {}).get("prefs", {})
+    prefs_str = _format_prefs(prefs)
+
+    prefs_block = f"\nBEKANNTE INFOS ÜBER DEN USER:\n{prefs_str}\n" if prefs_str else ""
 
     prompt = (
-        f"CHATVERLAUF:\n{format_history(history)}\n\n"
-        f"Der User hat gerade gefragt/geschrieben: '{last_msg}'\n\n"
-        f"Er interessiert sich für Content, Fotos oder Videos — er fragt nach Preis oder Angebot.\n\n"
-        f"Schreib jetzt als {persona['name']} eine Antwort die:\n"
-        f"1. Auf seine konkrete Frage eingeht (was er sehen will, was er fragt)\n"
-        f"2. Kurz beschreibt was du anbietest (erotische Fotos/Videos, privater Content)\n"
-        f"3. Den Gutschein von {persona['voucher_pct']}% NATÜRLICH einbaust — nicht plump\n"
-        f"4. Ihn neugierig macht und zum Klicken/Kaufen animiert\n\n"
-        f"VERBOTEN: Preisangaben in Euro (plattformabhängig), zu lange Texte, Markdown.\n"
-        f"Max 3 Sätze. Kein Präfix. Nur die Nachricht. Verführerisch aber nicht verzweifelt."
+        f"CHATVERLAUF:\n{format_history(history)}\n"
+        f"{prefs_block}\n"
+        f"Seine letzte Nachricht: '{last_msg}'\n\n"
+        f"Er fragt konkret nach Content, Fotos, Videos oder Preisen.\n\n"
+        f"Schreib als {persona['name']} eine Antwort die:\n"
+        f"- Direkt auf seine Frage / seinen Wunsch eingeht (was er konkret wollte)\n"
+        f"- Seine Vorlieben/Interessen einbaut falls bekannt\n"
+        f"- Beschreibt was dich bei ihm anmacht / was du für IHN speziell anbieten würdest\n"
+        f"- Den {persona['voucher_pct']}% Gutschein nur dann erwähnt wenn es sich organisch ergibt\n"
+        f"- So klingt als wäre es eine echte persönliche Nachricht — nicht wie Werbung\n\n"
+        f"STRENG VERBOTEN: vorgefertigte Phrasen, 'schau in mein Profil', generische Angebote, "
+        f"Markdown, mehr als 3 Sätze.\n"
+        f"Kein Präfix. Nur die Nachricht."
     )
-    try:
-        resp = client.chat.completions.create(
-            model      = model,
-            max_tokens = 200,
-            timeout    = 45,
-            messages   = [
-                {"role": "system", "content": persona["system"]},
-                {"role": "user",   "content": prompt},
-            ],
-        )
-        text = clean_reply(resp.choices[0].message.content or "")
-        if text:
-            return text
-    except Exception as e:
-        print(f"  [OFFER] Fehler: {e}")
 
-    # Fallback
-    return (
-        f"Ich hab Fotos und Videos die du noch nicht gesehen hast 😏 "
-        f"Mit meinem Gutschein ({persona['voucher_pct']}% Rabatt) lohnt es sich gerade besonders — "
-        f"schau mal in mein Profil 🔥"
-    )
+    for attempt in range(1, AI_RETRIES + 1):
+        try:
+            resp = client.chat.completions.create(
+                model      = model,
+                max_tokens = 250,
+                timeout    = 45,
+                messages   = [
+                    {"role": "system", "content": persona["system"]},
+                    {"role": "user",   "content": prompt},
+                ],
+            )
+            text = clean_reply(resp.choices[0].message.content or "")
+            if text:
+                return text
+        except Exception as e:
+            print(f"  [OFFER] Fehler (Versuch {attempt}): {e}")
+        if attempt < AI_RETRIES:
+            time.sleep(2 ** attempt)
+
+    # Letzter Ausweg: normaler Reply statt Template
+    return get_ai_reply(history, username, account_name, revenue, client, user_states, model)
 
 
 # ─── AI ───────────────────────────────────────────────────────────────────────
@@ -386,44 +444,44 @@ def get_ai_reply(
 ) -> str:
     """
     Generiert immer eine Antwort. Retry bis AI_RETRIES mal.
-    Wenn alle Versuche fehlschlagen → Persona-Fallback-Nachricht (kein Skip).
+    Bezieht gespeicherte User-Präferenzen mit ein.
     """
     persona   = PERSONAS[account_name]
     user_type = get_or_classify(username, history, revenue, user_states)
     trailing  = trailing_own(history)
+    prefs     = user_states.get(username, {}).get("prefs", {})
+    prefs_str = _format_prefs(prefs)
 
     user_msgs = [m.text for m in history if m.role == "user"]
     last_own  = [m.text for m in history if m.role == "me"][-3:]
 
-    # Strategie je nach User-Typ
     strategy = {
         "NEU":       "Stelle eine neugierige persönliche Frage basierend auf dem Verlauf. Kein Sales, kein Angebot.",
         "KALT":      "Knüpf an etwas Konkretes aus dem Verlauf an. Sei geheimnisvoll, weck Interesse. Kein Sales.",
         "KALT_HART": "Ignoriere Sales komplett. Stelle eine überraschend persönliche Frage die nichts mit Content zu tun hat.",
         "AKTIV":     "Geh auf seine letzte Nachricht ein, dann mach ein sanftes Angebot. Nur Gutschein wenn es sich natürlich ergibt.",
-        "KAEUFER":   "Lies den Verlauf genau: Was hat er gesagt/gekauft? Nenn ein konkretes Detail daraus. Erst Connection, dann erst sanft neuen Content erwähnen.",
-        "PREMIUM":   "Sehr persönlich — bezieh dich auf ein spezifisches Detail aus dem Verlauf. Behandle ihn wie jemanden den du wirklich magst.",
+        "KAEUFER":   "Lies den Verlauf genau: Was hat er gesagt/gekauft? Nenn ein konkretes Detail. Erst Connection, dann sanft neuen Content erwähnen.",
+        "PREMIUM":   "Sehr persönlich — bezieh dich auf ein spezifisches Detail. Behandle ihn wie jemanden den du wirklich magst.",
     }.get(user_type, "Antworte passend auf seine letzte Nachricht.")
 
     last_user_msg = user_msgs[-1] if user_msgs else "(keine)"
     last_own_str  = " | ".join(last_own) if last_own else "keine"
+    prefs_block   = f"\nBEKANNTE INFOS ÜBER DEN USER:\n{prefs_str}\n" if prefs_str else ""
 
     prompt = (
-        f"CHATVERLAUF:\n{format_history(history)}\n\n"
+        f"CHATVERLAUF:\n{format_history(history)}\n"
+        f"{prefs_block}\n"
         f"KONTEXT: {username} | {user_type} | ${revenue:.0f} Umsatz | "
-        f"{trailing}x keine Antwort auf deine letzte Nachricht\n"
+        f"{trailing}x keine Antwort\n"
         f"Seine letzte Nachricht: {last_user_msg}\n"
         f"Deine letzten Nachrichten (nicht wiederholen!): {last_own_str}\n\n"
         f"STRATEGIE: {strategy}\n\n"
-        f"REGELN FÜR DEN VERLAUF-BEZUG:\n"
-        f"- Greif konkret auf etwas aus dem CHATVERLAUF zurück (seinen Job, ein Thema das er erwähnte, "
-        f"etwas was er gekauft hat, wie er geschrieben hat)\n"
-        f"- Formuliere es jedes Mal ANDERS — nie zweimal dieselbe Einleitung\n"
-        f"- VERBOTEN: 'Ich hab mir gemerkt', 'Ich habe gehört', 'Ich weiß dass du', 'Ich dachte an dich' "
-        f"als Einstieg — das klingt automatisiert\n"
-        f"- Stattdessen: direkt ins Thema einsteigen, den Verlauf-Bezug einweben ohne es anzukündigen\n\n"
-        f"STRENG VERBOTEN: generische Phrasen, Gutschein-Code ohne Kontext, "
-        f"gleiche Formulierung wie in deinen letzten Nachrichten, steife oder roboterhafte Sprache.\n\n"
+        f"REGELN:\n"
+        f"- Baue seine bekannten Vorlieben/Infos natürlich ein wenn vorhanden\n"
+        f"- Bezieh dich konkret auf den Verlauf — nie allgemein\n"
+        f"- Jede Einleitung anders formulieren\n"
+        f"- VERBOTEN: 'Ich hab mir gemerkt', 'Ich habe gehört', roboterhafte Sprache, "
+        f"generische Phrasen, gleiche Formulierung wie vorher\n\n"
         f"Schreib jetzt die nächste Nachricht von {persona['name']}. "
         f"1-2 Sätze. Kein Präfix. Kein Markdown. Nur die Nachricht. Erotisch, verführerisch, persönlich."
     )
@@ -784,12 +842,23 @@ async def process_chat(
         await navigate_back(page)
         return False
 
+    # Präferenzen extrahieren und speichern (nur wenn genug User-Nachrichten)
+    user_msg_count = sum(1 for m in history if m.role == "user")
+    stored_prefs   = user_states.get(item.username, {}).get("prefs", {})
+    if user_msg_count >= 2 and not stored_prefs:
+        prefs = extract_user_prefs(history, client)
+        if prefs:
+            if item.username not in user_states:
+                user_states[item.username] = {}
+            user_states[item.username]["prefs"] = prefs
+            print(f"  [PREFS] gespeichert: {list(prefs.keys())}")
+
     user_type = user_states.get(item.username, {}).get("type", "?")
     prefix    = "[DRY] " if dry_run else ""
 
-    # Kaufabsicht erkennen → Angebots-Nachricht senden
+    # Kaufabsicht erkennen → personalisierte Angebots-Nachricht
     if detect_content_intent(history, client):
-        reply = get_offer_reply(history, item.username, account.name, item.revenue, client)
+        reply = get_offer_reply(history, item.username, account.name, item.revenue, client, user_states)
         print(f"  {user_type} | 💰OFFER | {prefix}{reply[:90]}")
         log_event({"kind": "offer_draft", "account": account.name, "username": item.username,
                    "reply": reply, "type": user_type, "dry_run": dry_run})
