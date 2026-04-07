@@ -33,11 +33,11 @@ from datetime import datetime
 from pathlib import Path
 
 # sys.path so setzen dass "shared", "content", "drive" direkt importierbar sind
-ROOT        = Path("/home/kali/4based-system")
-SCRIPTS_DIR = ROOT / "scripts"
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
+from shared.config      import ROOT, PLANS_ROOT
 from shared.ai_client   import make_client, ensure_ollama
 from content.analyzer   import (
     analyze_image, analyze_video,
@@ -60,7 +60,7 @@ from drive.manager      import (
 DATA_DIR     = ROOT / "data"
 ANALYSIS_DIR = DATA_DIR / "analysis"
 RESEARCH_DIR = DATA_DIR / "research"
-PLANS_ROOT   = Path("/mnt/Arbeit/Planung")
+# PLANS_ROOT kommt aus shared.config
 
 DAYS = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"]
 

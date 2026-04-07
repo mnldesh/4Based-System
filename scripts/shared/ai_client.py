@@ -20,7 +20,7 @@ from urllib.error import URLError
 
 import openai
 
-ROOT            = Path("/home/kali/4based-system")
+from shared.config import ROOT
 OLLAMA_BASE     = "http://127.0.0.1:11434/v1"
 OLLAMA_HEALTH   = "http://127.0.0.1:11434/api/tags"
 TEXT_MODEL      = "qwen3:14b"

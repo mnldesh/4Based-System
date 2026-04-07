@@ -15,9 +15,10 @@ import sys
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
-ROOT    = Path("/home/kali/4based-system")
-SCRIPTS = ROOT / "scripts"
+SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
+
+from shared.config import ROOT
 
 from shared.ai_client import make_client, ensure_ollama
 from orchestrator import (

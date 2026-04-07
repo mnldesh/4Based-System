@@ -8,7 +8,7 @@ import signal
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path("/home/kali/4based-system/scripts")))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from shared.base_runner import load_account, run_account, save_session
 
 

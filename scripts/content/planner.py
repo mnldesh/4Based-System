@@ -25,7 +25,7 @@ from shared.personas import PERSONAS
 from content.analyzer import ContentScore, load_analysis
 from content.researcher import MarketingInsights, load_insights
 
-ROOT = Path("/home/kali/4based-system")
+from shared.config import ROOT
 
 # Peak-Posting-Zeiten: 18:00–04:00 (Abend/Nacht) + 04:00–08:00 (früh morgens)
 PEAK_HOURS     = [18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7]
