@@ -1,8 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
 .env
+
+# Local config/secrets
 config/*.env
+config/*.json
 config/blacklist.json
+
+# Runtime
 state/
 logs/
-__pycache__/
-*.pyc
-*.pyo
+
+# Local artifacts
+*.patch
+*.save
