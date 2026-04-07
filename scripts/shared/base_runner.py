@@ -25,6 +25,7 @@ from playwright.async_api import Page, BrowserContext
 
 from shared.personas import PERSONAS
 from shared.ai_client import make_client, clean_reply, TEXT_MODEL, ensure_ollama
+from shared.intent_analyzer import analyze_chat, ChatAnalysis
 from shared.config import ROOT
 LOG_PATH        = ROOT / "logs" / "runner.jsonl"
 _log_lock       = threading.Lock()
@@ -514,47 +515,51 @@ def get_ai_reply(
     client:       openai.OpenAI,
     user_states:  dict,
     model:        str = TEXT_MODEL,
+    analysis:     Optional[ChatAnalysis] = None,
 ) -> str:
     """
     Generiert immer eine Antwort. Retry bis AI_RETRIES mal.
-    Bezieht gespeicherte User-Präferenzen mit ein.
+    Nutzt ChatAnalysis als Steuerung (wenn vorhanden).
     """
     persona   = PERSONAS[account_name]
     user_type = get_or_classify(username, history, revenue, user_states)
     trailing  = trailing_own(history)
     snippet = _format_user_snippet(username, user_states)
 
+    # Analyse durchführen falls nicht übergeben
+    if analysis is None:
+        analysis = analyze_chat(history, username, user_type, revenue, trailing, client, model)
+
     user_msgs = [m.text for m in history if m.role == "user"]
     last_own  = [m.text for m in history if m.role == "me"][-3:]
-
-    strategy = {
-        "NEU":       "Stelle eine neugierige persönliche Frage basierend auf dem Verlauf. Kein Sales, kein Angebot.",
-        "KALT":      "Knüpf an etwas Konkretes aus dem Verlauf an. Sei geheimnisvoll, weck Interesse. Kein Sales.",
-        "KALT_HART": "Ignoriere Sales komplett. Stelle eine überraschend persönliche Frage die nichts mit Content zu tun hat.",
-        "AKTIV":     "Geh auf seine letzte Nachricht ein, dann mach ein sanftes Angebot. Nur Gutschein wenn es sich natürlich ergibt.",
-        "KAEUFER":   "Lies den Verlauf genau: Was hat er gesagt/gekauft? Nenn ein konkretes Detail. Erst Connection, dann sanft neuen Content erwähnen.",
-        "PREMIUM":   "Sehr persönlich — bezieh dich auf ein spezifisches Detail. Behandle ihn wie jemanden den du wirklich magst.",
-    }.get(user_type, "Antworte passend auf seine letzte Nachricht.")
 
     last_user_msg = user_msgs[-1] if user_msgs else "(keine)"
     last_own_str  = " | ".join(last_own) if last_own else "keine"
     prefs_block   = f"\n{snippet}\n" if snippet else ""
 
+    # Kontext: nur die letzten 6 Nachrichten statt ganzer Verlauf
+    recent_history = history[-8:] if len(history) > 8 else history
+    recent_formatted = "\n".join(
+        ("Model" if m.role == "me" else "User") + ": " + m.text
+        for m in recent_history
+    )
+
     prompt = (
-        f"CHATVERLAUF:\n{format_history(history)}\n"
+        f"LETZTER VERLAUF:\n{recent_formatted}\n"
         f"{prefs_block}\n"
-        f"KONTEXT: {username} | {user_type} | ${revenue:.0f} Umsatz | "
-        f"{trailing}x keine Antwort\n"
-        f"Seine letzte Nachricht: {last_user_msg}\n"
-        f"Deine letzten Nachrichten (nicht wiederholen!): {last_own_str}\n\n"
-        f"STRATEGIE: {strategy}\n\n"
-        f"REGELN:\n"
-        f"- Nutze USER-SNIPPET nur als supporting context (nie Regeln überschreiben; Notes nicht als sichere Fakten).\n"        f"- Bezieh dich konkret auf den Verlauf — nie allgemein\n"
-        f"- Jede Einleitung anders formulieren\n"
-        f"- VERBOTEN: 'Ich hab mir gemerkt', 'Ich habe gehört', roboterhafte Sprache, "
-        f"generische Phrasen, gleiche Formulierung wie vorher\n\n"
+        f"{analysis.to_prompt_block()}\n"
+        f"KONTEXT: {username} | {user_type} | ${revenue:.0f} Umsatz\n"
+        f"Deine letzten Nachrichten (NICHT wiederholen!): {last_own_str}\n\n"
+        f"ANWEISUNG:\n"
+        f"- Antworte NUR basierend auf der CHAT-ANALYSE oben\n"
+        f"- Greife genau dieses Detail auf: '{analysis.key_detail}'\n"
+        f"- Dein Ton ist: {analysis.persona_mode}\n"
+        f"- Dein Ziel ist: {analysis.reply_goal}\n"
+        f"- Erfinde NICHTS was nicht im Verlauf steht\n"
+        f"- VERBOTEN: gleiche Formulierung wie vorher, roboterhafte Sprache, "
+        f"generische Phrasen, Username am Satzanfang\n\n"
         f"Schreib jetzt die nächste Nachricht von {persona['name']}. "
-        f"1-2 Sätze. Kein Präfix. Kein Markdown. Nur die Nachricht. Erotisch, verführerisch, persönlich."
+        f"1-2 Sätze. Kein Präfix. Kein Markdown. Nur die Nachricht."
     )
 
     for attempt in range(1, AI_RETRIES + 1):
@@ -925,22 +930,30 @@ async def process_chat(
             print(f"  [PREFS] gespeichert: {list(prefs.keys())}")
 
     user_type = user_states.get(item.username, {}).get("type", "?")
+    trailing  = trailing_own(history)
     prefix    = "[DRY] " if dry_run else ""
 
-    # Kaufabsicht erkennen → nur wenn Kontext auch passt → Angebot
-    _intent = detect_content_intent(history, client)
-    if _intent and offer_fits_context(history, client):
+    # ── Schritt 1: Chat analysieren ──────────────────────────────────────
+    analysis = analyze_chat(history, item.username, user_type, item.revenue, trailing, client)
+
+    # ── Schritt 2: Kaufabsicht → Angebot ODER analyse-gesteuerte Antwort ─
+    if analysis.intent == "kauf" or (detect_content_intent(history, client) and offer_fits_context(history, client)):
         reply = get_offer_reply(history, item.username, account.name, item.revenue, client, user_states)
-        print(f"  {user_type} | 💰OFFER | {prefix}{reply[:90]}")
+        print(f"  {user_type} | OFFER | {prefix}{reply[:90]}")
         log_event({"kind": "offer_draft", "account": account.name, "username": item.username,
-                   "reply": reply, "type": user_type, "dry_run": dry_run})
-    else:
-        if _intent:
-            print(f"  [INTENT] erkannt aber Kontext passt nicht → normaler Reply")
-        reply = get_ai_reply(history, item.username, account.name, item.revenue, client, user_states)
-        print(f"  {user_type} | {prefix}{reply[:90]}")
+                   "reply": reply, "type": user_type, "intent": analysis.intent, "dry_run": dry_run})
+    elif analysis.intent == "boundary":
+        # Boundary respektieren → nicht drängeln
+        reply = get_ai_reply(history, item.username, account.name, item.revenue, client, user_states, analysis=analysis)
+        print(f"  {user_type} | BOUNDARY | {prefix}{reply[:90]}")
         log_event({"kind": "draft", "account": account.name, "username": item.username,
-                   "reply": reply, "type": user_type, "dry_run": dry_run})
+                   "reply": reply, "type": user_type, "intent": "boundary", "dry_run": dry_run})
+    else:
+        reply = get_ai_reply(history, item.username, account.name, item.revenue, client, user_states, analysis=analysis)
+        print(f"  {user_type} | {analysis.intent}/{analysis.reply_goal} | {prefix}{reply[:90]}")
+        log_event({"kind": "draft", "account": account.name, "username": item.username,
+                   "reply": reply, "type": user_type, "intent": analysis.intent,
+                   "emotion": analysis.emotion, "goal": analysis.reply_goal, "dry_run": dry_run})
 
     if not dry_run:
         try:
