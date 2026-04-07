@@ -418,6 +418,34 @@ def detect_content_intent(
         return False
 
 
+def offer_fits_context(
+    history: list[Message],
+    client:  openai.OpenAI,
+    model:   str = TEXT_MODEL,
+) -> bool:
+    """
+    Prüft ob ein Angebot/Verkauf-Hinweis jetzt zum Gesprächsverlauf passt.
+    Verhindert dass Angebote rausgehen wenn der Kontext nicht stimmt
+    (z.B. User hat 'video' in anderem Zusammenhang erwähnt).
+    """
+    verlauf = format_history(history)
+    prompt = (
+        f"CHATVERLAUF:\n{verlauf}\n\n"
+        f"Würde es sich natürlich anfühlen wenn die Creatorin JETZT auf ein konkretes "
+        f"Angebot/Content-Kauf eingeht — oder wäre das fehl am Platz im aktuellen Gesprächsverlauf?\n"
+        f"Antworte nur mit 'passt' oder 'passt nicht'."
+    )
+    try:
+        resp = client.chat.completions.create(
+            model=model, max_tokens=5, timeout=15,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        answer = (resp.choices[0].message.content or "").strip().lower()
+        return answer.startswith("passt") and "nicht" not in answer
+    except Exception:
+        return True   # Im Zweifel: Angebot senden
+
+
 def get_offer_reply(
     history:      list[Message],
     username:     str,
@@ -900,13 +928,16 @@ async def process_chat(
     user_type = user_states.get(item.username, {}).get("type", "?")
     prefix    = "[DRY] " if dry_run else ""
 
-    # Kaufabsicht erkennen → personalisierte Angebots-Nachricht
-    if detect_content_intent(history, client):
+    # Kaufabsicht erkennen → nur wenn Kontext auch passt → Angebot
+    _intent = detect_content_intent(history, client)
+    if _intent and offer_fits_context(history, client):
         reply = get_offer_reply(history, item.username, account.name, item.revenue, client, user_states)
         print(f"  {user_type} | 💰OFFER | {prefix}{reply[:90]}")
         log_event({"kind": "offer_draft", "account": account.name, "username": item.username,
                    "reply": reply, "type": user_type, "dry_run": dry_run})
     else:
+        if _intent:
+            print(f"  [INTENT] erkannt aber Kontext passt nicht → normaler Reply")
         reply = get_ai_reply(history, item.username, account.name, item.revenue, client, user_states)
         print(f"  {user_type} | {prefix}{reply[:90]}")
         log_event({"kind": "draft", "account": account.name, "username": item.username,
