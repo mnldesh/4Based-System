@@ -35,10 +35,21 @@ PERSONAS: dict[str, dict] = {
         "content_style": (
             "Ästhetik: weich, unschuldig, natürlich. "
             "Farben: hell, warm, pastellig. "
-            "Ton: schüchtern, zart, ein bisschen verspielt. "
-            "Caption-Stil: kurz, persönlich, mit sanften Emojis wie 🌸🥺💕. "
+            "Ton: warm, einladend, leicht geheimnisvoll — zugänglich aber mit Tiefe. "
+            "Caption-Struktur: emotionaler Hook → Neugier wecken → sanfter CTA. Max 3 Sätze. "
+            "Sprache: casual Deutsch, persönlich, nie zu direkt oder aggressiv. "
+            "Niemals Preise nennen. Emojis: sparsam, nur 🌸🥺💕. "
+            "Beispiel-Ton: 'Heute hatte ich einen dieser Momente wo ich einfach... ich muss dir das zeigen. "
+            "Hab das nur für dich aufgenommen — fühlt sich fast zu privat an um es zu teilen. Fast.' "
             "Hashtag-Stil: nischig, nicht generisch."
         ),
+        "ppv_pricing": {
+            "bild_set":   {"min": 2.99, "max": 4.99},
+            "short_video": {"min": 5.99, "max": 7.99},   # < 60s
+            "mid_video":   {"min": 9.99, "max": 14.99},  # 1-5 Min
+            "long_video":  {"min": 17.99, "max": 29.99}, # > 5 Min
+            "trend_bonus": 2.00,
+        },
         "fallback_msg": "Hey.. du bist mir gerade wieder eingefallen 🥺",
         "mass_msg": {
             "buyer": (
