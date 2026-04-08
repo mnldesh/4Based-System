@@ -25,7 +25,6 @@ from playwright.async_api import Page, BrowserContext
 
 from shared.personas import PERSONAS
 from shared.ai_client import make_client, clean_reply, TEXT_MODEL, ensure_ollama
-from shared.intent_analyzer import analyze_chat, ChatAnalysis
 from shared.config import ROOT
 LOG_PATH        = ROOT / "logs" / "runner.jsonl"
 _log_lock       = threading.Lock()
@@ -38,6 +37,41 @@ def load_blacklist() -> set[str]:
     return {str(u).lower() for u in data if u}
 
 MAX_TRAILING          = 10
+
+# ─── Verbrannte Phrasen — werden nie gesendet ────────────────────────────────
+BANNED_PHRASES = [
+    "ich zieh gerade",
+    "ich steh unter der dusche",
+    "mein bauch zittert",
+    "was würdest du jetzt tun",
+    "nur für dich",
+    "du erregst mich",
+    "ich stelle mir vor",
+    "ich spüre wie",
+    "ich spüre dass",
+    "ich kann das geräusch",
+    "die tür ist nur halb",
+    "hast du heute schon daran gedacht",
+    "ich wette du fragst dich",
+    "ich hab mir gemerkt",
+    "ich habe gehört",
+    "meine finger wandern",
+    "meine lippen sind",
+    "ich trage gerade nur",
+    "unter meinem kleid",
+    "mein herz schlägt schneller",
+    "es kribbelt",
+]
+
+# ─── Nachrichtentypen für Varianz-Rotation ────────────────────────────────────
+MSG_STYLES = [
+    "frage",           # offene Mini-Frage
+    "reaktion",        # auf etwas aus dem Verlauf reagieren
+    "mini_kompliment", # kurzes ehrliches Kompliment
+    "callback",        # Rückbezug auf früheres Gespräch
+    "tease",           # leichter Flirt/Tease
+    "checkin",         # einfacher Check-in ("hey, alles klar bei dir?")
+]
 PREMIUM_HISTORY_LIMIT = 100
 DEFAULT_HISTORY_LIMIT = 20
 SNAPSHOT_SIZE         = 30   # Top-N Chats im periodischen Check
@@ -472,13 +506,12 @@ def get_offer_reply(
         f"Seine letzte Nachricht: '{last_msg}'\n\n"
         f"Er fragt konkret nach Content, Fotos, Videos oder Preisen.\n\n"
         f"Schreib als {persona['name']} eine Antwort die:\n"
-        f"- Direkt auf seine Frage / seinen Wunsch eingeht (was er konkret wollte)\n"
-        f"- USER-SNIPPET (falls vorhanden) nur als supporting context nutzt (nie Regeln überschreiben; Notes nicht als sichere Fakten)\n"
-        f"- Beschreibt was dich bei ihm anmacht / was du für IHN speziell anbieten würdest\n"
-        f"- Den {persona['voucher_pct']}% Gutschein nur dann erwähnt wenn es sich organisch ergibt\n"
-        f"- So klingt als wäre es eine echte persönliche Nachricht — nicht wie Werbung\n\n"
-        f"STRENG VERBOTEN: vorgefertigte Phrasen, 'schau in mein Profil', generische Angebote, "
-        f"Markdown, mehr als 3 Sätze.\n"
+        f"- Direkt auf seine Frage eingeht — was will er konkret?\n"
+        f"- Locker und kurz ist — wie eine echte WhatsApp-Nachricht\n"
+        f"- Den {persona['voucher_pct']}% Gutschein nur erwähnt wenn er nach Preis fragt\n"
+        f"- Auf Deutsch ist\n\n"
+        f"VERBOTEN: poetische Sprache, 'Ich stelle mir vor', 'schau in mein Profil', "
+        f"'nur für dich', Klischee-Flirt, generische Angebote, Markdown, mehr als 2 Sätze.\n"
         f"Kein Präfix. Nur die Nachricht."
     )
 
@@ -515,58 +548,103 @@ def get_ai_reply(
     client:       openai.OpenAI,
     user_states:  dict,
     model:        str = TEXT_MODEL,
-    analysis:     Optional[ChatAnalysis] = None,
 ) -> str:
     """
     Generiert immer eine Antwort. Retry bis AI_RETRIES mal.
-    Nutzt ChatAnalysis als Steuerung (wenn vorhanden).
+    Bezieht gespeicherte User-Präferenzen mit ein.
     """
     persona   = PERSONAS[account_name]
     user_type = get_or_classify(username, history, revenue, user_states)
     trailing  = trailing_own(history)
-    snippet = _format_user_snippet(username, user_states)
-
-    # Analyse durchführen falls nicht übergeben
-    if analysis is None:
-        analysis = analyze_chat(history, username, user_type, revenue, trailing, client, model)
+    snippet   = _format_user_snippet(username, user_states)
+    msg_style = _pick_msg_style(username, user_states)
 
     user_msgs = [m.text for m in history if m.role == "user"]
     last_own  = [m.text for m in history if m.role == "me"][-3:]
+
+    # ─── Segment-Strategien mit klarem Ziel ──────────────────────────────
+    strategy_map = {
+        "NEU": (
+            "ZIEL: Eine Antwort bekommen.\n"
+            "Locker, freundlich, leicht verspielt. Stell eine einfache offene Mini-Frage.\n"
+            "NICHT explizit. KEIN Flirt-Eskalationsversuch. KEIN Sales/Content/Angebot.\n"
+            "Wie wenn du jemand Neues anschreibst der dir aufgefallen ist."
+        ),
+        "KALT": (
+            "ZIEL: Gespräch öffnen.\n"
+            "Er hat nicht geantwortet. Schreib was Kurzes das neugierig macht.\n"
+            "NICHT explizit. KEIN Sales. Kein Bezug auf Content.\n"
+            "Einfach menschlich — als hättest du grad kurz an ihn gedacht."
+        ),
+        "KALT_HART": (
+            "ZIEL: Testen ob echter Gesprächswille da ist.\n"
+            "Komplett weg von Content/Plattform. Stell eine normale menschliche Frage.\n"
+            "Wie ein letzter lockerer Versuch — kein Druck, keine Erwartung."
+        ),
+        "AKTIV": (
+            "ZIEL: Echtes Gespräch führen.\n"
+            "Er redet mit dir — antworte direkt auf das was er gesagt hat.\n"
+            "Wie eine normale Unterhaltung. Maximal 1 leicht flirtiger Satz wenn es passt.\n"
+            "Gutschein NUR wenn er explizit nach Content/Preis fragt."
+        ),
+        "KAEUFER": (
+            "ZIEL: Beziehung vertiefen.\n"
+            "Er hat schon gekauft — zeig kleine Wertschätzung. Geh auf was ein das er gesagt hat.\n"
+            "Gezielter natürlicher Follow-up. Keine Standard-Verkaufsphrase.\n"
+            "Neuen Content nur erwähnen wenn es sich organisch ergibt."
+        ),
+        "PREMIUM": (
+            "ZIEL: Exklusivität + Halten.\n"
+            "Exklusiver Ton, stark personalisiert. Bezug auf konkretes Detail aus dem Verlauf.\n"
+            "Mehr Continuity — zeig dass du dich an ihn erinnerst.\n"
+            "Keine Massenfloskel. Kein generischer Flirt."
+        ),
+    }
+    strategy = strategy_map.get(user_type, "Antworte passend auf seine letzte Nachricht.")
+
+    # ─── Nachrichtenstil-Anweisung ───────────────────────────────────────
+    style_instruction = {
+        "frage":           "Schreib eine kurze offene Frage.",
+        "reaktion":        "Reagiere auf etwas Konkretes aus dem Verlauf.",
+        "mini_kompliment": "Mach ein kurzes ehrliches Kompliment (nicht generisch).",
+        "callback":        "Bezieh dich auf etwas aus einem früheren Gespräch.",
+        "tease":           "Leichter Flirt/Tease — aber subtil, nicht plump.",
+        "checkin":         "Einfacher Check-in, kurz und locker.",
+    }.get(msg_style, "Schreib eine kurze natürliche Nachricht.")
 
     last_user_msg = user_msgs[-1] if user_msgs else "(keine)"
     last_own_str  = " | ".join(last_own) if last_own else "keine"
     prefs_block   = f"\n{snippet}\n" if snippet else ""
 
-    # Kontext: nur die letzten 6 Nachrichten statt ganzer Verlauf
-    recent_history = history[-8:] if len(history) > 8 else history
-    recent_formatted = "\n".join(
-        ("Model" if m.role == "me" else "User") + ": " + m.text
-        for m in recent_history
-    )
-
     prompt = (
-        f"LETZTER VERLAUF:\n{recent_formatted}\n"
+        f"CHATVERLAUF:\n{format_history(history)}\n"
         f"{prefs_block}\n"
-        f"{analysis.to_prompt_block()}\n"
-        f"KONTEXT: {username} | {user_type} | ${revenue:.0f} Umsatz\n"
+        f"KONTEXT: {username} | {user_type} | {trailing}x keine Antwort\n"
+        f"Seine letzte Nachricht: {last_user_msg}\n"
         f"Deine letzten Nachrichten (NICHT wiederholen!): {last_own_str}\n\n"
-        f"ANWEISUNG:\n"
-        f"- Antworte NUR basierend auf der CHAT-ANALYSE oben\n"
-        f"- Greife genau dieses Detail auf: '{analysis.key_detail}'\n"
-        f"- Dein Ton ist: {analysis.persona_mode}\n"
-        f"- Dein Ziel ist: {analysis.reply_goal}\n"
-        f"- Erfinde NICHTS was nicht im Verlauf steht\n"
-        f"- VERBOTEN: gleiche Formulierung wie vorher, roboterhafte Sprache, "
-        f"generische Phrasen, Username am Satzanfang\n\n"
-        f"Schreib jetzt die nächste Nachricht von {persona['name']}. "
-        f"1-2 Sätze. Kein Präfix. Kein Markdown. Nur die Nachricht."
+        f"STRATEGIE:\n{strategy}\n\n"
+        f"STIL: {style_instruction}\n\n"
+        f"WIE DU SCHREIBST:\n"
+        f"- Wie eine echte Person auf WhatsApp — kurz, locker, Umgangssprache\n"
+        f"- Nicht perfekt formulieren. Echte Menschen schreiben keine Aufsätze\n"
+        f"- Maximal 1 Emoji pro Nachricht, nicht am Anfang\n"
+        f"- Immer auf Deutsch\n"
+        f"- Bezieh dich auf den konkreten Verlauf, nie allgemein\n\n"
+        f"VERBOTEN:\n"
+        f"- Poetische/literarische Sprache, verschachtelte Sätze\n"
+        f"- 'Ich stelle mir vor', 'Ich spüre', 'Ich hab mir gemerkt', 'Ich habe gehört'\n"
+        f"- Klischees: Dusche, Kleid ausziehen, 'nur für dich', 'du erregst mich'\n"
+        f"- Dieselbe Opening-Struktur wie die vorherigen Nachrichten\n"
+        f"- Generische Phrasen die an jeden passen könnten\n\n"
+        f"1-2 kurze Sätze als {persona['name']}. Kein Präfix. Kein Markdown."
     )
 
-    for attempt in range(1, AI_RETRIES + 1):
+    max_attempts = AI_RETRIES + 2  # Extra-Versuche falls Qualitätsfilter ablehnt
+    for attempt in range(1, max_attempts + 1):
         try:
             resp = client.chat.completions.create(
                 model      = model,
-                max_tokens = 600,
+                max_tokens = 200,
                 timeout    = 45,
                 messages   = [
                     {"role": "system", "content": persona["system"]},
@@ -574,22 +652,40 @@ def get_ai_reply(
                 ],
             )
             text = clean_reply(resp.choices[0].message.content or "")
-            if text:
-                return text
-            print(f"  [AI] Leere Antwort (Versuch {attempt}/{AI_RETRIES})")
+            if not text:
+                print(f"  [AI] Leere Antwort (Versuch {attempt}/{max_attempts})")
+                continue
+
+            # Qualitätsfilter
+            ok, reason = _quality_check(text, user_type, username, user_states, client, model)
+            if not ok:
+                print(f"  [QF] Abgelehnt: {reason} (Versuch {attempt}/{max_attempts})")
+                continue
+
+            # Stil für nächstes Mal speichern
+            if username not in user_states:
+                user_states[username] = {}
+            user_states[username]["last_msg_style"] = msg_style
+            # Nachricht in recent_msgs speichern für Ähnlichkeitscheck
+            recent = user_states[username].get("recent_msgs", [])
+            recent.append(text)
+            user_states[username]["recent_msgs"] = recent[-20:]  # max 20
+
+            return text
+
         except openai.APIConnectionError as e:
-            print(f"  [AI] Verbindung fehlgeschlagen (Versuch {attempt}/{AI_RETRIES}): {e}")
+            print(f"  [AI] Verbindung fehlgeschlagen (Versuch {attempt}/{max_attempts}): {e}")
         except openai.APIStatusError as e:
-            print(f"  [AI] API Fehler {e.status_code} (Versuch {attempt}/{AI_RETRIES})")
+            print(f"  [AI] API Fehler {e.status_code} (Versuch {attempt}/{max_attempts})")
         except Exception as e:
-            print(f"  [AI] Fehler (Versuch {attempt}/{AI_RETRIES}): {e}")
+            print(f"  [AI] Fehler (Versuch {attempt}/{max_attempts}): {e}")
 
-        if attempt < AI_RETRIES:
-            time.sleep(2 ** attempt)   # 2s, 4s
+        if attempt < max_attempts:
+            time.sleep(2 ** min(attempt, 3))
 
-    # Alle Versuche fehlgeschlagen → Fallback, nie überspringen
+    # Alle Versuche fehlgeschlagen → Fallback
     fallback = persona.get("fallback_msg", "Hey, meld dich 🙂")
-    print(f"  [AI] Fallback nach {AI_RETRIES} Versuchen")
+    print(f"  [AI] Fallback nach {max_attempts} Versuchen")
     return fallback
 
 # ─── Playwright helpers ───────────────────────────────────────────────────────
@@ -851,9 +947,97 @@ async def do_periodic_check(
 
     return current
 
+# ─── Qualitätsfilter ─────────────────────────────────────────────────────────
+
+def _contains_banned(text: str) -> bool:
+    """Prüft ob der Text eine verbrannte Phrase enthält."""
+    lower = text.lower()
+    return any(phrase in lower for phrase in BANNED_PHRASES)
+
+
+def _pick_msg_style(username: str, user_states: dict) -> str:
+    """Wählt einen Nachrichtentyp der sich vom letzten unterscheidet."""
+    last_style = user_states.get(username, {}).get("last_msg_style", "")
+    available  = [s for s in MSG_STYLES if s != last_style]
+    return random.choice(available) if available else random.choice(MSG_STYLES)
+
+
+def _quality_check(
+    text:         str,
+    user_type:    str,
+    username:     str,
+    user_states:  dict,
+    client:       openai.OpenAI,
+    model:        str = TEXT_MODEL,
+) -> tuple[bool, str]:
+    """
+    Bewertet eine Nachricht vor dem Versand.
+    Gibt (ok, grund) zurück.
+    """
+    # Harte Checks — sofort ablehnen
+    if _contains_banned(text):
+        return False, "banned_phrase"
+    if len(text.strip()) < 5:
+        return False, "too_short"
+
+    # Zu explizit für kalte Segmente?
+    if user_type in ("NEU", "KALT", "KALT_HART"):
+        explicit_words = ["nackt", "sex", "ficken", "blasen", "schwanz", "pussy",
+                          "brüste", "titten", "feucht", "geil", "erregt", "orgasmus"]
+        lower = text.lower()
+        if any(w in lower for w in explicit_words):
+            return False, "too_explicit_for_segment"
+
+    # Ähnlichkeit mit letzten Nachrichten
+    recent = user_states.get(username, {}).get("recent_msgs", [])
+    lower  = text.lower().strip()
+    for old in recent[-20:]:
+        if _similarity(lower, old.lower()) > 0.6:
+            return False, "too_similar"
+
+    # LLM-Qualitätsprüfung
+    try:
+        resp = client.chat.completions.create(
+            model      = model,
+            max_tokens = 80,
+            timeout    = 15,
+            messages   = [
+                {"role": "system", "content": "Du bewertest Chat-Nachrichten. Antworte NUR mit einer Zahl 1-5 pro Kategorie, Format: N/N/N/N/N"},
+                {"role": "user", "content": (
+                    f"Bewerte diese Nachricht für Segment '{user_type}':\n\"{text}\"\n\n"
+                    "Natürlichkeit/Personalisierung/SpamGefahr(1=kein spam,5=spam)/SegmentFit/Antwortwahrscheinlichkeit"
+                )},
+            ],
+        )
+        scores_raw = clean_reply(resp.choices[0].message.content or "")
+        parts = [int(x.strip()) for x in scores_raw.replace(" ", "").split("/") if x.strip().isdigit()]
+        if len(parts) == 5:
+            natural, personal, spam, fit, reply_chance = parts
+            # Spam invertiert: 1=gut, 5=schlecht → ablehnen wenn spam >= 4
+            if spam >= 4:
+                return False, f"spam_score_{spam}"
+            # Gesamtqualität: natural + personal + fit + reply_chance - spam
+            total = natural + personal + fit + reply_chance - spam
+            if total < 10:
+                return False, f"low_quality_{total}"
+    except Exception:
+        pass  # Bei Fehler durchlassen
+
+    return True, "ok"
+
+
+def _similarity(a: str, b: str) -> float:
+    """Einfache Jaccard-Ähnlichkeit auf Wort-Ebene."""
+    sa, sb = set(a.split()), set(b.split())
+    if not sa or not sb:
+        return 0.0
+    return len(sa & sb) / len(sa | sb)
+
+
 # ─── Core: Chat verarbeiten ───────────────────────────────────────────────────
 
-COOLDOWN_HOURS = 5   # Nicht wieder schreiben wenn letzte Nachricht < 5h
+COOLDOWN_MINUTES  = 30   # Nicht wieder schreiben wenn letzte Nachricht < 30min
+NO_REPLY_HOURS    = 3    # Erneut anschreiben wenn > 3h ohne Antwort
 
 async def process_chat(
     page:        Page,
@@ -869,16 +1053,28 @@ async def process_chat(
         print(f"  [SKIP] Blacklist: {item.username}")
         return False
 
-    # Cooldown-Check: letzte eigene Nachricht < 5h → überspringen
+    # Cooldown + No-Reply Logik
     last_sent = user_states.get(item.username, {}).get("last_sent_at")
+    last_sent_preview = user_states.get(item.username, {}).get("last_sent_preview")
     if last_sent:
         from datetime import timezone
         try:
             delta = now_utc() - datetime.fromisoformat(last_sent).replace(tzinfo=timezone.utc)
-            if delta.total_seconds() < COOLDOWN_HOURS * 3600:
-                remaining = int((COOLDOWN_HOURS * 3600 - delta.total_seconds()) / 60)
-                print(f"  [SKIP] Kürzlich geschrieben ({int(delta.total_seconds()/60)}min ago, noch {remaining}min)")
+            mins  = delta.total_seconds() / 60
+
+            # Unter 30min → immer skippen
+            if mins < COOLDOWN_MINUTES:
+                remaining = int(COOLDOWN_MINUTES - mins)
+                print(f"  [SKIP] Kürzlich geschrieben ({int(mins)}min, noch {remaining}min)")
                 return False
+
+            # Keine Antwort erhalten UND unter 3h → skippen
+            no_reply = last_sent_preview is not None and item.preview == last_sent_preview
+            if no_reply and mins < NO_REPLY_HOURS * 60:
+                print(f"  [SKIP] Keine Antwort ({int(mins)}min, erneut ab {NO_REPLY_HOURS}h)")
+                return False
+
+            # Keine Antwort aber > 3h → nochmal versuchen (fällt durch)
         except (ValueError, TypeError):
             pass
 
@@ -930,30 +1126,22 @@ async def process_chat(
             print(f"  [PREFS] gespeichert: {list(prefs.keys())}")
 
     user_type = user_states.get(item.username, {}).get("type", "?")
-    trailing  = trailing_own(history)
     prefix    = "[DRY] " if dry_run else ""
 
-    # ── Schritt 1: Chat analysieren ──────────────────────────────────────
-    analysis = analyze_chat(history, item.username, user_type, item.revenue, trailing, client)
-
-    # ── Schritt 2: Kaufabsicht → Angebot ODER analyse-gesteuerte Antwort ─
-    if analysis.intent == "kauf" or (detect_content_intent(history, client) and offer_fits_context(history, client)):
+    # Kaufabsicht erkennen → nur wenn Kontext auch passt → Angebot
+    _intent = detect_content_intent(history, client)
+    if _intent and offer_fits_context(history, client):
         reply = get_offer_reply(history, item.username, account.name, item.revenue, client, user_states)
-        print(f"  {user_type} | OFFER | {prefix}{reply[:90]}")
+        print(f"  {user_type} | 💰OFFER | {prefix}{reply[:90]}")
         log_event({"kind": "offer_draft", "account": account.name, "username": item.username,
-                   "reply": reply, "type": user_type, "intent": analysis.intent, "dry_run": dry_run})
-    elif analysis.intent == "boundary":
-        # Boundary respektieren → nicht drängeln
-        reply = get_ai_reply(history, item.username, account.name, item.revenue, client, user_states, analysis=analysis)
-        print(f"  {user_type} | BOUNDARY | {prefix}{reply[:90]}")
-        log_event({"kind": "draft", "account": account.name, "username": item.username,
-                   "reply": reply, "type": user_type, "intent": "boundary", "dry_run": dry_run})
+                   "reply": reply, "type": user_type, "dry_run": dry_run})
     else:
-        reply = get_ai_reply(history, item.username, account.name, item.revenue, client, user_states, analysis=analysis)
-        print(f"  {user_type} | {analysis.intent}/{analysis.reply_goal} | {prefix}{reply[:90]}")
+        if _intent:
+            print(f"  [INTENT] erkannt aber Kontext passt nicht → normaler Reply")
+        reply = get_ai_reply(history, item.username, account.name, item.revenue, client, user_states)
+        print(f"  {user_type} | {prefix}{reply[:90]}")
         log_event({"kind": "draft", "account": account.name, "username": item.username,
-                   "reply": reply, "type": user_type, "intent": analysis.intent,
-                   "emotion": analysis.emotion, "goal": analysis.reply_goal, "dry_run": dry_run})
+                   "reply": reply, "type": user_type, "dry_run": dry_run})
 
     if not dry_run:
         try:
@@ -1016,8 +1204,10 @@ async def run_account(
 
                 crash_delay = 20
 
-                # Fortschritt laden (falls Absturz/Neustart mitten im Pass)
+                # Fortschritt — bei Neustart sauber anfangen
                 progress_file = ROOT / "state" / f"{account.name}_progress.json"
+                if progress_file.exists():
+                    progress_file.unlink()
                 def _load_progress() -> set[str]:
                     data = load_json(progress_file, [])
                     if data:

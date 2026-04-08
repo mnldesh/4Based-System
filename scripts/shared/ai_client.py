@@ -72,6 +72,8 @@ _RE_THINK    = re.compile(r"<think>.*?</think>", re.DOTALL)
 _RE_BOLD     = re.compile(r"\*\*(.+?)\*\*")
 _RE_SPEAKER  = re.compile(r"(?m)^[\w][\w ]{0,20}:\s*")
 _RE_CODE     = re.compile(r"```(?:json)?")
+_RE_NON_LATIN = re.compile(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef\u3400-\u4dbf\u2e80-\u2eff\u1100-\u11ff\uac00-\ud7af]")
+_RE_GARBLED  = re.compile(r"[a-zäöüß]{15,}", re.IGNORECASE)  # Wortmonster wie "drauffrageuzubereiten"
 
 # ─── Globaler Client-Cache ────────────────────────────────────────────────────
 _client: Optional[openai.OpenAI] = None
@@ -238,10 +240,30 @@ def parse_json_from_response(raw: str) -> Optional[dict]:
 
 
 def clean_reply(text: str) -> str:
-    """Thinking-Tags, Markdown-Bold und Speaker-Prefix entfernen."""
+    """Thinking-Tags, Markdown-Bold, Speaker-Prefix, Fremdzeichen entfernen."""
     text = _RE_THINK.sub("", text)
     text = _RE_BOLD.sub(r"\1", text)
     text = _RE_SPEAKER.sub("", text)
     text = text.strip()
     lines = [l.strip() for l in text.split("\n") if l.strip()]
-    return lines[0] if lines else text
+    text = lines[0] if lines else text
+    # Chinesisch/CJK/Koreanisch abschneiden — qwen3 leakt manchmal
+    if _RE_NON_LATIN.search(text):
+        # Alles ab dem ersten Fremdzeichen abschneiden
+        idx = _RE_NON_LATIN.search(text).start()
+        text = text[:idx].rstrip()
+    # Wortmonster entfernen (>15 Buchstaben ohne Leerzeichen = Tokenizer-Müll)
+    if _RE_GARBLED.search(text):
+        text = _RE_GARBLED.sub("", text).strip()
+        # Doppelte Leerzeichen aufräumen
+        text = re.sub(r"  +", " ", text)
+    return text
+
+
+def is_reply_usable(text: str) -> bool:
+    """Prüft ob eine bereinigte Antwort brauchbar ist (nicht leer, nicht zu kurz)."""
+    if not text or len(text) < 10:
+        return False
+    # Nur Emojis/Satzzeichen übrig?
+    alpha = sum(1 for c in text if c.isalpha())
+    return alpha >= 5
