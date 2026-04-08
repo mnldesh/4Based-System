@@ -387,7 +387,7 @@ if __name__ == "__main__":
     r = chat("Du bist ein Assistent.", "Sag 'Hallo' auf Deutsch.", purpose="chat", max_tokens=20)
     print(f"  → {r or '[LEER]'}")
 
-    print("\n=== Plan-Route (deepseek-r1) ===")
+    print("\n=== Plan-Route (qwen2.5) ===")
     r = chat("Du bist ein Texter.", "Schreib eine kurze Caption.", purpose="plan", max_tokens=50)
     print(f"  → {r or '[LEER]'}")
 
