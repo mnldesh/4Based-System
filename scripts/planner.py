@@ -1,12 +1,12 @@
 """
-tia_planner.py — Content-Plan nur für Tia erstellen
+planner.py — Content-Plan für eine Persona erstellen
 
 Datenquelle: immer Google Drive (drive_source_folder_id in config/orchestrator.json)
 
 Ablauf:
   1. Google Drive scannen → Bilder/Videos analysieren
   2. Marketing-Recherche (DuckDuckGo) — parallel zur Analyse
-  3. Tagesplan für Tia generieren
+  3. Tagesplan für die gewählte Persona generieren
   4. Plan lokal + in Drive speichern
 """
 
@@ -33,12 +33,16 @@ from orchestrator import (
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Tia — Content-Plan aus Google Drive erstellen")
-    ap.add_argument("--skip-research", action="store_true", help="Keine neue Recherche (letzte nutzen)")
-    ap.add_argument("--dry-run",       action="store_true", help="Plan nicht in Drive hochladen")
+    ap = argparse.ArgumentParser(description="Content-Plan aus Google Drive erstellen")
+    ap.add_argument("--persona",        required=True, choices=["hilda", "tia"], help="Persona auswählen")
+    ap.add_argument("--skip-research",  action="store_true", help="Keine neue Recherche (letzte nutzen)")
+    ap.add_argument("--dry-run",        action="store_true", help="Plan nicht in Drive hochladen")
     args = ap.parse_args()
 
-    print(f"\n[TIA PLANNER] Start")
+    persona = args.persona
+    label = persona.upper()
+
+    print(f"\n[{label} PLANNER] Start")
     print(f"  Datenquelle: Google Drive")
     print(f"  Recherche  : {'NEIN (letzte)' if args.skip_research else 'JA'}")
     print(f"  Drive-Upload: {'NEIN' if args.dry_run else 'JA'}")
@@ -54,11 +58,11 @@ def main() -> None:
     _ex = ThreadPoolExecutor(max_workers=1)
     research_future = _ex.submit(step_research, cfg, args.skip_research)
 
-    analysis = step_scan_and_analyze(cfg, use_drive=True, client=client, persona_name="tia")
+    analysis = step_scan_and_analyze(cfg, use_drive=True, client=client, persona_name=persona)
     insights = research_future.result()
     _ex.shutdown(wait=True)
 
-    plans = step_plan(analysis, insights, cfg, ["tia"], client)
+    plans = step_plan(analysis, insights, cfg, [persona], client)
     step_upload_plans(plans, cfg, use_drive=not args.dry_run)
     print_summary(plans, analysis)
 

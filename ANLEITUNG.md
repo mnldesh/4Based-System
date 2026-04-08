@@ -7,8 +7,7 @@ Das System automatisiert den täglichen Workflow für zwei Creator-Profile (Hild
 | Komponente | Funktion |
 |---|---|
 | `orchestrator.py` | Tagesplan erstellen (Analyse → Recherche → Pläne) |
-| `hilda_runner.py` | Hilda-Profil auf 4based.com bedienen |
-| `tia_runner.py` | Tia-Profil auf 4based.com bedienen |
+| `runner.py` | Profil auf 4based.com bedienen (--persona hilda\|tia) |
 | `content/analyzer.py` | Bilder + Videos analysieren (Score, Kategorie, Caption-Idee) |
 | `content/researcher.py` | Marketing-Trends recherchieren (DuckDuckGo) |
 | `content/planner.py` | Content-Plan generieren (Posts + Massennachrichten) |
@@ -169,14 +168,13 @@ data/Plan für die nächsten Tage/
 
 ```bash
 # Hilda-Profil starten
-python scripts/hilda_runner.py
+python scripts/runner.py --persona hilda
 
 # Tia-Profil starten
-python scripts/tia_runner.py
+python scripts/runner.py --persona tia
 
 # Optionen:
-python scripts/hilda_runner.py --headless          # Kein Browser-Fenster
-python scripts/hilda_runner.py --config config/hilda_custom.json
+python scripts/runner.py --persona hilda --headless          # Kein Browser-Fenster
 ```
 
 ### Was die Runner machen:
@@ -271,8 +269,8 @@ Ergebnisse in `data/research/insights_DATUM.json`
 │   └── tia_state.json                ← User-Daten Tia
 ├── scripts/
 │   ├── orchestrator.py
-│   ├── hilda_runner.py
-│   ├── tia_runner.py
+│   ├── runner.py
+│   ├── planner.py
 │   ├── shared/
 │   │   ├── ai_client.py              ← Ollama API Client
 │   │   ├── base_runner.py            ← Runner-Basis-Klasse
@@ -305,8 +303,8 @@ Ergebnisse in `data/research/insights_DATUM.json`
 ```bash
 npm install -g pm2
 
-pm2 start scripts/hilda_runner.py  --name hilda --interpreter .venv/bin/python
-pm2 start scripts/tia_runner.py    --name tia   --interpreter .venv/bin/python
+pm2 start "python scripts/runner.py --persona hilda"  --name hilda --interpreter .venv/bin/python
+pm2 start "python scripts/runner.py --persona tia"    --name tia   --interpreter .venv/bin/python
 pm2 start "python scripts/orchestrator.py" --name orchestrator --cron "0 7 * * *"
 
 pm2 save
@@ -332,7 +330,7 @@ python scripts/drive/manager.py test
 ### Playwright Login schlägt fehl
 ```bash
 # Sichtbaren Browser zum Debuggen
-python scripts/hilda_runner.py --headless false
+python scripts/runner.py --persona hilda --headless false
 ```
 
 ### Analyse schlägt fehl (kein ffmpeg)

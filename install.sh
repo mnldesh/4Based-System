@@ -145,12 +145,12 @@ if [ -d "/mnt/Arbeit" ]; then
     ok "Planungs-Ordner erstellt: $PLAN_DIR"
 else
     warn "/mnt/Arbeit nicht eingehängt — $PLAN_DIR wird beim ersten Planer-Lauf erstellt"
-    warn "Sicherstellen: mount /mnt/Arbeit vor dem Start von hilda_planner / tia_planner"
+    warn "Sicherstellen: mount /mnt/Arbeit vor dem Start von planner.py"
 fi
 
 # ─── 8. Startscripte ausführbar machen ────────────────────────────────────────
 step "8. Startscripte"
-chmod +x start_hilda.sh start_tia.sh 2>/dev/null && ok "start_hilda.sh / start_tia.sh ausführbar" || true
+chmod +x start.sh 2>/dev/null && ok "start.sh ausführbar" || true
 
 # ─── 9. Config erstellen falls nicht vorhanden ────────────────────────────────
 step "9. Konfiguration"
@@ -210,20 +210,20 @@ echo ""
 echo "NÄCHSTE SCHRITTE:"
 echo ""
 echo "  1. Sessions speichern (einmalig):"
-echo "     ./start_hilda.sh --save-session"
-echo "     ./start_tia.sh   --save-session"
+echo "     ./start.sh hilda --save-session"
+echo "     ./start.sh tia   --save-session"
 echo ""
 echo "  2. Testen (ohne Nachrichten zu senden):"
-echo "     ./start_hilda.sh --dry-run --once"
-echo "     ./start_tia.sh   --dry-run --once"
+echo "     ./start.sh hilda --dry-run --once"
+echo "     ./start.sh tia   --dry-run --once"
 echo ""
 echo "  3. Produktiv starten:"
-echo "     ./start_hilda.sh --headless"
-echo "     ./start_tia.sh   --headless"
+echo "     ./start.sh hilda --headless"
+echo "     ./start.sh tia   --headless"
 echo ""
 echo "  4. Planer (Pläne → /mnt/Arbeit/Planung):"
-echo "     .venv/bin/python scripts/hilda_planner.py --dry-run"
-echo "     .venv/bin/python scripts/tia_planner.py   --dry-run"
+echo "     .venv/bin/python scripts/planner.py --persona hilda --dry-run"
+echo "     .venv/bin/python scripts/planner.py --persona tia   --dry-run"
 echo ""
 echo "  5. Referenz-Docs eintragen:"
 echo "     references/hilda-bot/  → SOUL.md, hilda-system.md, PLAYBOOK.md, MEMORY.md"
