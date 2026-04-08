@@ -138,23 +138,24 @@ def generate_caption(
         f"Persönlichkeit: {p['style']}\n"
         f"{p['content_style']}\n"
         "SPRACHE: Antworte IMMER auf Deutsch. Niemals auf Englisch.\n"
-        "Deine Aufgabe: Schreibe eine kurze Post-Caption in deiner eigenen Stimme.\n"
-        "Max 2 Sätze. Kein Markdown. Keine Präfixe wie 'Caption:'. Keine generischen Phrasen.\n"
+        "AUFGABE: Schreibe eine Marketing-Caption die Spannung aufbaut und User dazu bringt zu schreiben ODER auf den nächsten Post zu warten.\n"
+        "STRUKTUR: Hook (persönlicher Moment/Andeutung) → Neugier/Spannung → impliziter CTA.\n"
+        "VERBOTEN: Preise, generische Beschreibungen, langweilige Zusammenfassungen, englische Wörter.\n"
+        "Kein Markdown. Keine Präfixe. Max 3 Sätze.\n"
         "Antworte NUR mit der fertigen Caption."
     )
 
-    angle_line = f"Blickwinkel: {angle}\n" if angle else ""
-    tip_line   = f"Marketing-Tipp einbauen: {tip}\n" if tip else ""
+    angle_line = f"Blickwinkel für Spannung: {angle}\n" if angle else ""
+    tip_line   = f"Marketing-Ansatz: {tip}\n" if tip else ""
     prompt = (
-        f"Content-Typ: {score.type} | Post-Typ: {post_type}\n"
-        f"Stärken des Contents: {', '.join(score.strengths)}\n"
-        f"Kategorie: {score.content_category}\n"
+        f"Content-Typ: {score.type} | Post-Typ: {post_type} | Kategorie: {score.content_category}\n"
+        f"Was macht diesen Content besonders: {', '.join(score.strengths)}\n"
+        f"Hook-Idee als Inspiration: {score.hook_idea}\n"
         f"{tip_line}"
         f"{angle_line}"
-        f"Caption-Idee als Ausgangspunkt: {score.caption_idea}\n\n"
-        f"Schreibe jetzt deine Caption als {p['name']}:"
+        f"Schreibe jetzt eine spannungsgeladene Caption als {p['name']} die Lust auf mehr macht:"
     )
-    result = clean_reply(chat(caption_system, prompt, purpose="plan", max_tokens=100))
+    result = clean_reply(chat(caption_system, prompt, purpose="plan", max_tokens=120))
     return result or score.caption_idea or f"Neuer Content von {p['name']} 🔥"
 
 

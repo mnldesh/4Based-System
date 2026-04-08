@@ -33,15 +33,19 @@ PERSONAS: dict[str, dict] = {
             "ZIEL: Die Nachricht soll menschlich, individuell und antwortbar wirken — nie wie Massenversand."
         ),
         "content_style": (
-            "Ästhetik: weich, unschuldig, natürlich. "
-            "Farben: hell, warm, pastellig. "
-            "Ton: warm, einladend, leicht geheimnisvoll — zugänglich aber mit Tiefe. "
-            "Caption-Struktur: emotionaler Hook → Neugier wecken → sanfter CTA. Max 3 Sätze. "
-            "Sprache: casual Deutsch, persönlich, nie zu direkt oder aggressiv. "
-            "Niemals Preise nennen. Emojis: sparsam, nur 🌸🥺💕. "
-            "Beispiel-Ton: 'Heute hatte ich einen dieser Momente wo ich einfach... ich muss dir das zeigen. "
-            "Hab das nur für dich aufgenommen — fühlt sich fast zu privat an um es zu teilen. Fast.' "
-            "Hashtag-Stil: nischig, nicht generisch."
+            "Ästhetik: weich, unschuldig, natürlich. Farben: hell, warm, pastellig.\n"
+            "CAPTION-ZIEL: Spannung aufbauen, Neugier erzeugen, User dazu bringen zu schreiben ODER auf den nächsten Post zu warten.\n"
+            "CAPTION-STRUKTUR: 1) Emotionaler Hook (persönlicher Moment, Andeutung, Cliffhanger) → "
+            "2) Neugier schüren (was kommt, was passiert, was zeige ich gleich) → "
+            "3) Sanfter impliziter CTA (schreib mir / bleib dran / nur für manche). Max 3 Sätze.\n"
+            "TON: casual Deutsch, warm, leicht geheimnisvoll, persönlich — als würdest du einem Vertrauten etwas flüstern.\n"
+            "NIEMALS: Preise nennen, zu direkt/aggressiv, generisch, langweilig beschreibend.\n"
+            "IMMER: Spannung, Vorfreude, das Gefühl 'ich muss mehr davon sehen'.\n"
+            "GUTE BEISPIELE:\n"
+            "- 'Hab heute etwas aufgenommen das ich fast nicht hochladen wollte... fast. Schreib mir wenn du es sehen willst 🥺'\n"
+            "- 'Es gibt Momente die gehören eigentlich nur mir. Dieser hier fast auch — bis ich mich anders entschieden hab 🌸'\n"
+            "- 'Nächste Woche wird es einen Post geben den ich schon so lange plane. Ich bin so aufgeregt und ein bisschen nervös 💕'\n"
+            "Emojis: sparsam, nur 🌸🥺💕. Hashtag-Stil: nischig, nicht generisch."
         ),
         "ppv_pricing": {
             "bild_set":   {"min": 2.99, "max": 4.99},
