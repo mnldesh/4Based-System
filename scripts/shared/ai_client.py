@@ -195,26 +195,36 @@ def _chat_claude(
     user:       str,
     max_tokens: int = 500,
 ) -> str:
-    """Claude API mit Ollama-Fallback."""
+    """Claude API mit Ollama-Fallback. Bei 500: 1 kurzer Retry, dann Fallback."""
     if not user:
         return ""
 
     claude = make_claude_client()
     if claude:
-        try:
-            kwargs: dict = dict(
-                model      = CLAUDE_MODEL,
-                max_tokens = max_tokens,
-                messages   = [{"role": "user", "content": user}],
-            )
-            if system:
-                kwargs["system"] = system
-            msg  = claude.messages.create(**kwargs)
-            text = msg.content[0].text.strip() if msg.content else ""
-            if text:
-                return text
-        except Exception as e:
-            print(f"[CLAUDE] Fehler — Fallback auf Ollama: {e}")
+        kwargs: dict = dict(
+            model      = CLAUDE_MODEL,
+            max_tokens = max_tokens,
+            messages   = [{"role": "user", "content": user}],
+        )
+        if system:
+            kwargs["system"] = system
+
+        for attempt in range(2):  # max. 1 Retry bei 500
+            try:
+                msg  = claude.messages.create(**kwargs)
+                text = msg.content[0].text.strip() if msg.content else ""
+                if text:
+                    return text
+            except Exception as e:
+                status = getattr(e, "status_code", None)
+                if status == 500:
+                    print(f"[CLAUDE] 500 Internal Server Error")
+                    if attempt == 0:
+                        time.sleep(1)
+                        continue          # 1 Retry
+                else:
+                    print(f"[CLAUDE] Fehler — Fallback auf Ollama: {e}")
+                break                     # kein weiterer Versuch
 
     print(f"[CLAUDE→OLLAMA] Fallback auf {TEXT_MODEL}")
     return _chat_ollama_raw(system, user, max_tokens=max_tokens, model=TEXT_MODEL)
