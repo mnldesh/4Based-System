@@ -13,6 +13,7 @@ Aufrufer müssen keine Modellnamen oder Client-Typen kennen.
 
 import os
 import re
+import sys
 import subprocess
 import time
 import base64
@@ -20,6 +21,11 @@ import functools
 from pathlib import Path
 from typing import Optional
 from urllib.request import urlopen
+
+# Sicherstellen dass scripts/ im Suchpfad ist (auch bei direktem Aufruf)
+_SCRIPTS = Path(__file__).resolve().parent.parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
 
 import openai
 
@@ -365,8 +371,6 @@ def is_reply_usable(text: str) -> bool:
 # ─── Lokaler Test ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import sys
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     ensure_ollama()
 
     print("\n=== Chat-Route (Claude primär) ===")
