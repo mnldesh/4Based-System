@@ -345,7 +345,14 @@ def parse_json_from_response(raw: str) -> Optional[dict]:
 
 def clean_reply(text: str) -> str:
     """Thinking-Tags, Markdown-Bold, Speaker-Prefix, Fremdzeichen entfernen."""
-    text = _RE_THINK.sub("", text)
+    # Fallback: wenn nur <think>…</think> ohne Antwort → letzten Satz aus Think-Block nehmen
+    think_match = _RE_THINK.search(text)
+    cleaned = _RE_THINK.sub("", text).strip()
+    if not cleaned and think_match:
+        inner = think_match.group(0)[7:-8].strip()  # <think>…</think> abschneiden
+        sentences = [s.strip() for s in inner.replace("\n", " ").split(".") if len(s.strip()) > 10]
+        cleaned = sentences[-1] if sentences else inner.split("\n")[-1].strip()
+    text = cleaned
     text = _RE_BOLD.sub(r"\1", text)
     text = _RE_SPEAKER.sub("", text)
     text = text.strip()
