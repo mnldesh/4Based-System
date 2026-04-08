@@ -412,6 +412,7 @@ if __name__ == "__main__":
             caption_idea     = "Ein entspannter Abend",
             hook_idea        = "So sehe ich aus wenn...",
             persona_fit      = {"hilda": 9, "tia": 6},
+            video_meta       = {},
         )
         persona = args.persona if args.persona != "both" else "hilda"
         print(f"\n=== Caption Test ({persona}) ===")
