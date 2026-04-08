@@ -27,7 +27,7 @@ try:
 except ImportError:
     from duckduckgo_search import DDGS
 
-from shared.ai_client import make_client, chat, parse_json_from_response
+from shared.ai_client import make_client, chat_ollama as chat, parse_json_from_response
 from shared.personas import PERSONAS
 from shared.config import ROOT
 

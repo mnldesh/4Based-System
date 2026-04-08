@@ -24,8 +24,9 @@ import openai
 from playwright.async_api import Page, BrowserContext
 
 from shared.personas import PERSONAS
-from shared.ai_client import make_client, clean_reply, TEXT_MODEL, ensure_ollama
+from shared.ai_client import make_client, clean_reply, TEXT_MODEL, ensure_ollama, chat_claude
 from shared.config import ROOT
+from shared import reply_guard
 LOG_PATH        = ROOT / "logs" / "runner.jsonl"
 _log_lock       = threading.Lock()
 _BLACKLIST_PATH = ROOT / "config" / "blacklist.json"
@@ -298,11 +299,7 @@ def get_or_classify(
 
 # ─── User-Präferenzen ────────────────────────────────────────────────────────
 
-def extract_user_prefs(
-    history: list[Message],
-    client:  openai.OpenAI,
-    model:   str = TEXT_MODEL,
-) -> dict:
+def extract_user_prefs(history: list[Message]) -> dict:
     """
     Extrahiert Vorlieben, Interessen und Persönlichkeit des Users aus dem Chatverlauf.
     Gibt ein Dict zurück das in user_states gespeichert wird.
@@ -327,14 +324,9 @@ def extract_user_prefs(
         f'}}'
     )
     try:
-        resp = client.chat.completions.create(
-            model      = model,
-            max_tokens = 200,
-            timeout    = 20,
-            messages   = [{"role": "user", "content": prompt}],
-        )
         from shared.ai_client import parse_json_from_response
-        data = parse_json_from_response(resp.choices[0].message.content or "")
+        raw  = chat_claude("", prompt, max_tokens=200)
+        data = parse_json_from_response(raw)
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
@@ -423,11 +415,7 @@ def _has_intent_keywords(text: str) -> bool:
     return any(kw in t for kw in _INTENT_KEYWORDS)
 
 
-def detect_content_intent(
-    history: list[Message],
-    client:  openai.OpenAI,
-    model:   str = TEXT_MODEL,
-) -> bool:
+def detect_content_intent(history: list[Message]) -> bool:
     """Keyword-Schnellcheck, dann AI-Check bei Unklarheit."""
     user_msgs = [m.text for m in history if m.role == "user"]
     if not user_msgs:
@@ -443,20 +431,13 @@ def detect_content_intent(
         f"Nur 'ja' oder 'nein'."
     )
     try:
-        resp = client.chat.completions.create(
-            model=model, max_tokens=5, timeout=15,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return (resp.choices[0].message.content or "").strip().lower().startswith("ja")
+        answer = chat_claude("", prompt, max_tokens=5)
+        return answer.strip().lower().startswith("ja")
     except Exception:
         return False
 
 
-def offer_fits_context(
-    history: list[Message],
-    client:  openai.OpenAI,
-    model:   str = TEXT_MODEL,
-) -> bool:
+def offer_fits_context(history: list[Message]) -> bool:
     """
     Prüft ob ein Angebot/Verkauf-Hinweis jetzt zum Gesprächsverlauf passt.
     Verhindert dass Angebote rausgehen wenn der Kontext nicht stimmt
@@ -470,11 +451,7 @@ def offer_fits_context(
         f"Antworte nur mit 'passt' oder 'passt nicht'."
     )
     try:
-        resp = client.chat.completions.create(
-            model=model, max_tokens=5, timeout=15,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        answer = (resp.choices[0].message.content or "").strip().lower()
+        answer = chat_claude("", prompt, max_tokens=5).strip().lower()
         return answer.startswith("passt") and "nicht" not in answer
     except Exception:
         return True   # Im Zweifel: Angebot senden
@@ -485,9 +462,7 @@ def get_offer_reply(
     username:     str,
     account_name: str,
     revenue:      float,
-    client:       openai.OpenAI,
     user_states:  dict,
-    model:        str = TEXT_MODEL,
 ) -> str:
     """
     Vollständig KI-generierte Angebots-Nachricht — kein Template.
@@ -517,16 +492,7 @@ def get_offer_reply(
 
     for attempt in range(1, AI_RETRIES + 1):
         try:
-            resp = client.chat.completions.create(
-                model      = model,
-                max_tokens = 250,
-                timeout    = 45,
-                messages   = [
-                    {"role": "system", "content": persona["system"]},
-                    {"role": "user",   "content": prompt},
-                ],
-            )
-            text = clean_reply(resp.choices[0].message.content or "")
+            text = clean_reply(chat_claude(persona["system"], prompt, max_tokens=250))
             if text:
                 return text
         except Exception as e:
@@ -534,8 +500,8 @@ def get_offer_reply(
         if attempt < AI_RETRIES:
             time.sleep(2 ** attempt)
 
-    # Letzter Ausweg: normaler Reply statt Template
-    return get_ai_reply(history, username, account_name, revenue, client, user_states, model)
+    # Letzter Ausweg: normaler Reply
+    return get_ai_reply(history, username, account_name, revenue, user_states)
 
 
 # ─── AI ───────────────────────────────────────────────────────────────────────
@@ -545,9 +511,7 @@ def get_ai_reply(
     username:     str,
     account_name: str,
     revenue:      float,
-    client:       openai.OpenAI,
     user_states:  dict,
-    model:        str = TEXT_MODEL,
 ) -> str:
     """
     Generiert immer eine Antwort. Retry bis AI_RETRIES mal.
@@ -639,44 +603,30 @@ def get_ai_reply(
         f"1-2 kurze Sätze als {persona['name']}. Kein Präfix. Kein Markdown."
     )
 
-    max_attempts = AI_RETRIES + 2  # Extra-Versuche falls Qualitätsfilter ablehnt
+    max_attempts = AI_RETRIES + 2  # Extra-Versuche falls Guard ablehnt
     for attempt in range(1, max_attempts + 1):
         try:
-            resp = client.chat.completions.create(
-                model      = model,
-                max_tokens = 200,
-                timeout    = 45,
-                messages   = [
-                    {"role": "system", "content": persona["system"]},
-                    {"role": "user",   "content": prompt},
-                ],
-            )
-            text = clean_reply(resp.choices[0].message.content or "")
+            text = clean_reply(chat_claude(persona["system"], prompt, max_tokens=200))
             if not text:
                 print(f"  [AI] Leere Antwort (Versuch {attempt}/{max_attempts})")
                 continue
 
-            # Qualitätsfilter
-            ok, reason = _quality_check(text, user_type, username, user_states, client, model)
+            # Regelbasierter Guard
+            ok, reason = reply_guard.check(text, user_type, user_states.get(username, {}))
             if not ok:
-                print(f"  [QF] Abgelehnt: {reason} (Versuch {attempt}/{max_attempts})")
+                print(f"  [GUARD] Abgelehnt: {reason} (Versuch {attempt}/{max_attempts})")
                 continue
 
-            # Stil für nächstes Mal speichern
+            # Stil + recent_msgs speichern
             if username not in user_states:
                 user_states[username] = {}
             user_states[username]["last_msg_style"] = msg_style
-            # Nachricht in recent_msgs speichern für Ähnlichkeitscheck
             recent = user_states[username].get("recent_msgs", [])
             recent.append(text)
-            user_states[username]["recent_msgs"] = recent[-20:]  # max 20
+            user_states[username]["recent_msgs"] = recent[-20:]
 
             return text
 
-        except openai.APIConnectionError as e:
-            print(f"  [AI] Verbindung fehlgeschlagen (Versuch {attempt}/{max_attempts}): {e}")
-        except openai.APIStatusError as e:
-            print(f"  [AI] API Fehler {e.status_code} (Versuch {attempt}/{max_attempts})")
         except Exception as e:
             print(f"  [AI] Fehler (Versuch {attempt}/{max_attempts}): {e}")
 
@@ -908,7 +858,6 @@ async def do_periodic_check(
     snapshot:    dict[str, str],
     processed:   set[str],
     account:     Account,
-    client:      openai.OpenAI,
     user_states: dict,
     dry_run:     bool,
 ) -> dict[str, str]:
@@ -936,7 +885,7 @@ async def do_periodic_check(
                     chat = await read_item(page, i)
                     if chat:
                         limit = PREMIUM_HISTORY_LIMIT if chat.revenue > 20 else DEFAULT_HISTORY_LIMIT
-                        await process_chat(page, chat, account, client, dry_run, user_states, limit)
+                        await process_chat(page, chat, account, dry_run, user_states, limit)
                         processed.add(username)
                     break
             except Exception:
@@ -962,68 +911,6 @@ def _pick_msg_style(username: str, user_states: dict) -> str:
     return random.choice(available) if available else random.choice(MSG_STYLES)
 
 
-def _quality_check(
-    text:         str,
-    user_type:    str,
-    username:     str,
-    user_states:  dict,
-    client:       openai.OpenAI,
-    model:        str = TEXT_MODEL,
-) -> tuple[bool, str]:
-    """
-    Bewertet eine Nachricht vor dem Versand.
-    Gibt (ok, grund) zurück.
-    """
-    # Harte Checks — sofort ablehnen
-    if _contains_banned(text):
-        return False, "banned_phrase"
-    if len(text.strip()) < 5:
-        return False, "too_short"
-
-    # Zu explizit für kalte Segmente?
-    if user_type in ("NEU", "KALT", "KALT_HART"):
-        explicit_words = ["nackt", "sex", "ficken", "blasen", "schwanz", "pussy",
-                          "brüste", "titten", "feucht", "geil", "erregt", "orgasmus"]
-        lower = text.lower()
-        if any(w in lower for w in explicit_words):
-            return False, "too_explicit_for_segment"
-
-    # Ähnlichkeit mit letzten Nachrichten
-    recent = user_states.get(username, {}).get("recent_msgs", [])
-    lower  = text.lower().strip()
-    for old in recent[-20:]:
-        if _similarity(lower, old.lower()) > 0.6:
-            return False, "too_similar"
-
-    # LLM-Qualitätsprüfung
-    try:
-        resp = client.chat.completions.create(
-            model      = model,
-            max_tokens = 80,
-            timeout    = 15,
-            messages   = [
-                {"role": "system", "content": "Du bewertest Chat-Nachrichten. Antworte NUR mit einer Zahl 1-5 pro Kategorie, Format: N/N/N/N/N"},
-                {"role": "user", "content": (
-                    f"Bewerte diese Nachricht für Segment '{user_type}':\n\"{text}\"\n\n"
-                    "Natürlichkeit/Personalisierung/SpamGefahr(1=kein spam,5=spam)/SegmentFit/Antwortwahrscheinlichkeit"
-                )},
-            ],
-        )
-        scores_raw = clean_reply(resp.choices[0].message.content or "")
-        parts = [int(x.strip()) for x in scores_raw.replace(" ", "").split("/") if x.strip().isdigit()]
-        if len(parts) == 5:
-            natural, personal, spam, fit, reply_chance = parts
-            # Spam invertiert: 1=gut, 5=schlecht → ablehnen wenn spam >= 4
-            if spam >= 4:
-                return False, f"spam_score_{spam}"
-            # Gesamtqualität: natural + personal + fit + reply_chance - spam
-            total = natural + personal + fit + reply_chance - spam
-            if total < 10:
-                return False, f"low_quality_{total}"
-    except Exception:
-        pass  # Bei Fehler durchlassen
-
-    return True, "ok"
 
 
 def _similarity(a: str, b: str) -> float:
@@ -1043,7 +930,6 @@ async def process_chat(
     page:        Page,
     item:        ChatItem,
     account:     Account,
-    client:      openai.OpenAI,
     dry_run:     bool,
     user_states: dict,
     hist_limit:  int = DEFAULT_HISTORY_LIMIT,
@@ -1118,7 +1004,7 @@ async def process_chat(
     user_msg_count = sum(1 for m in history if m.role == "user")
     stored_prefs   = user_states.get(item.username, {}).get("prefs", {})
     if user_msg_count >= 2 and not stored_prefs:
-        prefs = extract_user_prefs(history, client)
+        prefs = extract_user_prefs(history)
         if prefs:
             if item.username not in user_states:
                 user_states[item.username] = {}
@@ -1129,16 +1015,16 @@ async def process_chat(
     prefix    = "[DRY] " if dry_run else ""
 
     # Kaufabsicht erkennen → nur wenn Kontext auch passt → Angebot
-    _intent = detect_content_intent(history, client)
-    if _intent and offer_fits_context(history, client):
-        reply = get_offer_reply(history, item.username, account.name, item.revenue, client, user_states)
+    _intent = detect_content_intent(history)
+    if _intent and offer_fits_context(history):
+        reply = get_offer_reply(history, item.username, account.name, item.revenue, user_states)
         print(f"  {user_type} | 💰OFFER | {prefix}{reply[:90]}")
         log_event({"kind": "offer_draft", "account": account.name, "username": item.username,
                    "reply": reply, "type": user_type, "dry_run": dry_run})
     else:
         if _intent:
             print(f"  [INTENT] erkannt aber Kontext passt nicht → normaler Reply")
-        reply = get_ai_reply(history, item.username, account.name, item.revenue, client, user_states)
+        reply = get_ai_reply(history, item.username, account.name, item.revenue, user_states)
         print(f"  {user_type} | {prefix}{reply[:90]}")
         log_event({"kind": "draft", "account": account.name, "username": item.username,
                    "reply": reply, "type": user_type, "dry_run": dry_run})
@@ -1172,8 +1058,7 @@ async def run_account(
 ) -> None:
     from playwright.async_api import async_playwright
 
-    ensure_ollama()   # Ollama starten falls nicht aktiv
-    client      = make_client()
+    ensure_ollama()   # Ollama für Fallback + Vision starten
     user_states = load_user_states(account.name)
 
     crash_delay = 20
@@ -1260,7 +1145,7 @@ async def run_account(
                         print(f"  {marker} {chat.username} {label} [{cached}]", end=" ", flush=True)
 
                         limit = PREMIUM_HISTORY_LIMIT if chat.revenue > 20 else DEFAULT_HISTORY_LIMIT
-                        ok    = await process_chat(page, chat, account, client, dry_run, user_states, limit)
+                        ok    = await process_chat(page, chat, account, dry_run, user_states, limit)
 
                         processed_this_pass.add(chat.username)
                         _save_progress(processed_this_pass)   # sofort persistieren

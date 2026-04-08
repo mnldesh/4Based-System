@@ -52,6 +52,8 @@ pip install --upgrade pip -q
 
 pip install -q \
     openai \
+    anthropic \
+    python-dotenv \
     playwright \
     ddgs \
     google-api-python-client \
@@ -102,24 +104,34 @@ fi
 
 # ─── 6. Ollama Modelle ────────────────────────────────────────────────────────
 step "6. Ollama Modelle"
-warn "qwen3:14b ≈ 9.3 GB | llava:7b ≈ 4.7 GB — Download kann dauern!"
+warn "qwen2.5:latest ≈ 4.7 GB | llava:7b ≈ 4.7 GB | deepseek-r1:7b-qwen-distill-q4_K_M ≈ 4.4 GB — Download kann dauern!"
 
 if curl -s http://127.0.0.1:11434/api/tags &>/dev/null; then
-    if ! ollama list 2>/dev/null | grep -q "qwen3:14b"; then
-        info "qwen3:14b herunterladen..."
-        ollama pull qwen3:14b && ok "qwen3:14b installiert"
+    if ! ollama list 2>/dev/null | grep -q "qwen2.5:latest"; then
+        info "qwen2.5:latest herunterladen (Chat-Fallback)..."
+        ollama pull qwen2.5:latest && ok "qwen2.5:latest installiert"
     else
-        ok "qwen3:14b bereits vorhanden"
+        ok "qwen2.5:latest bereits vorhanden"
     fi
 
     if ! ollama list 2>/dev/null | grep -q "llava:7b"; then
-        info "llava:7b herunterladen..."
+        info "llava:7b herunterladen (Vision)..."
         ollama pull llava:7b && ok "llava:7b installiert"
     else
         ok "llava:7b bereits vorhanden"
     fi
+
+    if ! ollama list 2>/dev/null | grep -q "deepseek-r1:7b-qwen-distill-q4_K_M"; then
+        info "deepseek-r1:7b-qwen-distill-q4_K_M herunterladen (Planung/Strategie)..."
+        ollama pull deepseek-r1:7b-qwen-distill-q4_K_M && ok "deepseek-r1:7b installiert"
+    else
+        ok "deepseek-r1:7b-qwen-distill-q4_K_M bereits vorhanden"
+    fi
 else
-    warn "Ollama nicht erreichbar — Modelle übersprungen. Später manuell: ollama pull qwen3:14b && ollama pull llava:7b"
+    warn "Ollama nicht erreichbar — Modelle übersprungen. Später manuell:"
+    warn "  ollama pull qwen2.5:latest"
+    warn "  ollama pull llava:7b"
+    warn "  ollama pull deepseek-r1:7b-qwen-distill-q4_K_M"
 fi
 
 # ─── 7. Ordnerstruktur ────────────────────────────────────────────────────────
@@ -174,6 +186,17 @@ else
     ok "config/orchestrator.json bereits vorhanden"
 fi
 
+if [ ! -f ".env" ]; then
+    cat > .env << 'ENVFILE'
+# Anthropic API Key — hier eintragen
+# Erhältlich unter: https://console.anthropic.com/
+ANTHROPIC_API_KEY=sk-ant-...
+ENVFILE
+    ok ".env Vorlage erstellt — ANTHROPIC_API_KEY eintragen!"
+else
+    ok ".env bereits vorhanden"
+fi
+
 if [ ! -f "config/blacklist.json" ]; then
     echo '["4Based"]' > config/blacklist.json
     ok "config/blacklist.json erstellt (enthält: 4Based)"
@@ -186,7 +209,7 @@ step "10. Installations-Check"
 ERRORS=0
 
 # Python-Imports testen
-python -c "import openai; import playwright; print('  openai + playwright: OK')" || { warn "openai/playwright Import fehlgeschlagen"; ERRORS=$((ERRORS+1)); }
+python -c "import openai; import anthropic; import playwright; print('  openai + anthropic + playwright: OK')" || { warn "openai/anthropic/playwright Import fehlgeschlagen"; ERRORS=$((ERRORS+1)); }
 python -c "import sys; sys.path.insert(0, 'scripts'); from shared.personas import PERSONAS; print('  personas: OK')" || { warn "personas Import fehlgeschlagen"; ERRORS=$((ERRORS+1)); }
 python -c "import sys; sys.path.insert(0, 'scripts'); from shared.ai_client import make_client; print('  ai_client: OK')" || { warn "ai_client Import fehlgeschlagen"; ERRORS=$((ERRORS+1)); }
 python -c "import sys; sys.path.insert(0, 'scripts'); from shared.base_runner import load_account; print('  base_runner: OK')" || { warn "base_runner Import fehlgeschlagen"; ERRORS=$((ERRORS+1)); }
@@ -208,6 +231,9 @@ fi
 echo "╚══════════════════════════════════════╝"
 echo ""
 echo "NÄCHSTE SCHRITTE:"
+echo ""
+echo "  0. Anthropic API Key eintragen:"
+echo "     nano .env   →   ANTHROPIC_API_KEY=sk-ant-..."
 echo ""
 echo "  1. Sessions speichern (einmalig):"
 echo "     ./start.sh hilda --save-session"

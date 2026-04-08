@@ -1,13 +1,19 @@
 """
-ai_client.py — Ollama / OpenAI-kompatibler Client
+ai_client.py — Multi-Modell-Client
+
+Modell-Routing:
+  - Chat/Nachrichten:  Claude API (primär) → qwen2.5:latest (Notfall-Fallback)
+  - Planung/Strategie: deepseek-r1:7b-qwen-distill-q4_K_M (Ollama)
+  - Vision/Bilder:     llava:7b (Ollama)
 
 Optimierungen:
-  - Regex auf Modulebene kompiliert (statt bei jedem Call)
-  - Globaler gecachter Client (statt new-Instanz pro Call)
-  - Timeout auf alle API-Calls
-  - Retry mit exponential Backoff bei transienten Fehlern
+  - Regex auf Modulebene kompiliert
+  - Globale gecachte Clients (lazy init)
+  - Retry mit exponential Backoff
+  - .env für Anthropic API Key
 """
 
+import os
 import re
 import subprocess
 import time
@@ -16,26 +22,34 @@ import functools
 from pathlib import Path
 from typing import Optional
 from urllib.request import urlopen
-from urllib.error import URLError
 
 import openai
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+except ImportError:
+    pass  # python-dotenv nicht installiert — ANTHROPIC_API_KEY muss als Umgebungsvariable gesetzt sein
+
 from shared.config import ROOT
+
+# ─── Modell-Konstanten ────────────────────────────────────────────────────────
+CLAUDE_MODEL    = "claude-sonnet-4-5-20251001"        # Primär: Chat/Nachrichten
+PLANNING_MODEL  = "deepseek-r1:7b-qwen-distill-q4_K_M"  # Lokal: Planung/Strategie
+TEXT_MODEL      = "qwen2.5:latest"                    # Ollama-Fallback: Chat
+VISION_MODEL    = "llava:7b"                          # Lokal: Bildanalyse
+
 OLLAMA_BASE     = "http://127.0.0.1:11434/v1"
 OLLAMA_HEALTH   = "http://127.0.0.1:11434/api/tags"
-TEXT_MODEL      = "qwen3:14b"
-VISION_MODEL    = "llava:7b"
-API_TIMEOUT     = 180   # qwen3:14b braucht bei Queue länger
+API_TIMEOUT     = 180
 MAX_RETRIES     = 3
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 
+# ─── Ollama starten ───────────────────────────────────────────────────────────
+
 def ensure_ollama(wait: int = 30) -> None:
-    """
-    Prüft ob Ollama läuft. Startet es automatisch wenn nicht.
-    Wartet bis zu `wait` Sekunden auf den Start.
-    Beendet das Programm wenn Ollama nicht gestartet werden kann.
-    """
+    """Prüft ob Ollama läuft. Startet es automatisch wenn nicht."""
     def _is_up() -> bool:
         try:
             urlopen(OLLAMA_HEALTH, timeout=3)
@@ -67,29 +81,52 @@ def ensure_ollama(wait: int = 30) -> None:
 
     raise SystemExit(f"[OLLAMA] Konnte nach {wait}s nicht gestartet werden. Manuell prüfen: ollama serve")
 
-# ─── Regex — einmal kompiliert ────────────────────────────────────────────────
-_RE_THINK    = re.compile(r"<think>.*?</think>", re.DOTALL)
-_RE_BOLD     = re.compile(r"\*\*(.+?)\*\*")
-_RE_SPEAKER  = re.compile(r"(?m)^[\w][\w ]{0,20}:\s*")
-_RE_CODE     = re.compile(r"```(?:json)?")
-_RE_NON_LATIN = re.compile(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef\u3400-\u4dbf\u2e80-\u2eff\u1100-\u11ff\uac00-\ud7af]")
-_RE_GARBLED  = re.compile(r"[a-zäöüß]{15,}", re.IGNORECASE)  # Wortmonster wie "drauffrageuzubereiten"
 
-# ─── Globaler Client-Cache ────────────────────────────────────────────────────
-_client: Optional[openai.OpenAI] = None
+# ─── Regex — einmal kompiliert ────────────────────────────────────────────────
+_RE_THINK     = re.compile(r"<think>.*?</think>", re.DOTALL)
+_RE_BOLD      = re.compile(r"\*\*(.+?)\*\*")
+_RE_SPEAKER   = re.compile(r"(?m)^[\w][\w ]{0,20}:\s*")
+_RE_CODE      = re.compile(r"```(?:json)?")
+_RE_NON_LATIN = re.compile(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef\u3400-\u4dbf\u2e80-\u2eff\u1100-\u11ff\uac00-\ud7af]")
+_RE_GARBLED   = re.compile(r"[a-zäöüß]{15,}", re.IGNORECASE)
+
+
+# ─── Ollama Client (für Vision + Planung + Fallback) ─────────────────────────
+_ollama_client: Optional[openai.OpenAI] = None
 
 def make_client() -> openai.OpenAI:
-    """Gibt immer denselben Client zurück (lazy init)."""
-    global _client
-    if _client is None:
-        _client = openai.OpenAI(
+    """Gibt immer denselben Ollama-Client zurück (lazy init)."""
+    global _ollama_client
+    if _ollama_client is None:
+        _ollama_client = openai.OpenAI(
             base_url=OLLAMA_BASE,
             api_key="ollama",
             timeout=API_TIMEOUT,
         )
-    return _client
+    return _ollama_client
 
-# ─── Retry-Decorator ──────────────────────────────────────────────────────────
+
+# ─── Claude Client (für Chat/Nachrichten) ─────────────────────────────────────
+_claude_client = None
+
+def make_claude_client():
+    """Gibt Anthropic-Client zurück. None wenn API Key fehlt oder Paket nicht installiert."""
+    global _claude_client
+    if _claude_client is None:
+        try:
+            import anthropic
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                print("[CLAUDE] ANTHROPIC_API_KEY nicht gesetzt — Fallback auf Ollama")
+                return None
+            _claude_client = anthropic.Anthropic(api_key=api_key, timeout=60.0)
+        except ImportError:
+            print("[CLAUDE] 'anthropic' Paket nicht installiert — Fallback auf Ollama")
+            return None
+    return _claude_client
+
+
+# ─── Retry-Decorator (für Ollama) ─────────────────────────────────────────────
 
 def _with_retry(fn):
     """Decorator: wiederholt bei transienten Fehlern mit exp. Backoff."""
@@ -127,7 +164,58 @@ def _with_retry(fn):
         return ""
     return wrapper
 
-# ─── API-Calls ────────────────────────────────────────────────────────────────
+
+# ─── Chat: Claude (primär) + Ollama-Fallback ──────────────────────────────────
+
+def chat_claude(
+    system:     str,
+    user:       str,
+    max_tokens: int = 500,
+) -> str:
+    """
+    Chat via Claude API (primär).
+    Fällt auf qwen2.5:latest via Ollama zurück wenn Claude nicht verfügbar.
+    """
+    if not user:
+        return ""
+
+    claude = make_claude_client()
+    if claude:
+        try:
+            import anthropic
+            kwargs: dict = dict(
+                model      = CLAUDE_MODEL,
+                max_tokens = max_tokens,
+                messages   = [{"role": "user", "content": user}],
+            )
+            if system:
+                kwargs["system"] = system
+            msg  = claude.messages.create(**kwargs)
+            text = msg.content[0].text.strip() if msg.content else ""
+            if text:
+                return text
+        except Exception as e:
+            print(f"[CLAUDE] Fehler — Fallback auf Ollama: {e}")
+
+    # Notfall-Fallback
+    print(f"[CLAUDE→OLLAMA] Fallback auf {TEXT_MODEL}")
+    return chat(system, user, max_tokens=max_tokens, model=TEXT_MODEL)
+
+
+# ─── Chat: Ollama (für Planung/Strategie) ─────────────────────────────────────
+
+def chat_ollama(
+    system:     str,
+    user:       str,
+    client:     Optional[openai.OpenAI] = None,
+    max_tokens: int = 500,
+    model:      str = PLANNING_MODEL,
+) -> str:
+    """Chat via Ollama — für Planung, Strategie, Recherche."""
+    return chat(system, user, client=client, max_tokens=max_tokens, model=model)
+
+
+# ─── Chat: Ollama direkt (intern) ─────────────────────────────────────────────
 
 @_with_retry
 def chat(
@@ -137,7 +225,7 @@ def chat(
     max_tokens: int = 500,
     model:      str = TEXT_MODEL,
 ) -> str:
-    """Text-Chat. Gibt leeren String bei dauerhaftem Fehler zurück."""
+    """Text-Chat via Ollama. Gibt leeren String bei dauerhaftem Fehler zurück."""
     if not system or not user:
         return ""
     c    = client or make_client()
@@ -151,6 +239,8 @@ def chat(
     )
     return resp.choices[0].message.content.strip()
 
+
+# ─── Vision: Ollama llava:7b ──────────────────────────────────────────────────
 
 @_with_retry
 def vision(
@@ -192,6 +282,8 @@ def vision(
     return resp.choices[0].message.content.strip()
 
 
+# ─── Hilfsfunktionen ──────────────────────────────────────────────────────────
+
 def parse_json_from_response(raw: str) -> Optional[dict]:
     """Extrahiert JSON sicher via JSONDecoder.raw_decode(), repariert truncated JSON."""
     import json
@@ -208,7 +300,6 @@ def parse_json_from_response(raw: str) -> Optional[dict]:
             return None
 
     def _repair_and_parse(s: str) -> Optional[dict]:
-        """Offene geschweifte Klammern schließen und nochmal versuchen."""
         open_b = s.count('{') - s.count('}')
         if open_b > 0:
             repaired = s + '}' * open_b
@@ -220,12 +311,10 @@ def parse_json_from_response(raw: str) -> Optional[dict]:
         result = _try_parse(text, start)
         if result is not None:
             return result
-        # Truncated JSON reparieren
         result = _repair_and_parse(text[start:])
         if result is not None:
             return result
 
-    # Fallback: Markdown-Code-Block entfernen
     cleaned = _RE_CODE.sub("", text).strip()
     start   = cleaned.find("{")
     if start != -1:
@@ -247,23 +336,18 @@ def clean_reply(text: str) -> str:
     text = text.strip()
     lines = [l.strip() for l in text.split("\n") if l.strip()]
     text = lines[0] if lines else text
-    # Chinesisch/CJK/Koreanisch abschneiden — qwen3 leakt manchmal
     if _RE_NON_LATIN.search(text):
-        # Alles ab dem ersten Fremdzeichen abschneiden
-        idx = _RE_NON_LATIN.search(text).start()
+        idx  = _RE_NON_LATIN.search(text).start()
         text = text[:idx].rstrip()
-    # Wortmonster entfernen (>15 Buchstaben ohne Leerzeichen = Tokenizer-Müll)
     if _RE_GARBLED.search(text):
         text = _RE_GARBLED.sub("", text).strip()
-        # Doppelte Leerzeichen aufräumen
         text = re.sub(r"  +", " ", text)
     return text
 
 
 def is_reply_usable(text: str) -> bool:
-    """Prüft ob eine bereinigte Antwort brauchbar ist (nicht leer, nicht zu kurz)."""
+    """Prüft ob eine bereinigte Antwort brauchbar ist."""
     if not text or len(text) < 10:
         return False
-    # Nur Emojis/Satzzeichen übrig?
     alpha = sum(1 for c in text if c.isalpha())
     return alpha >= 5
