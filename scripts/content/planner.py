@@ -130,20 +130,31 @@ def generate_caption(
     tip:          str,
     angle:        str = "",
 ) -> str:
-    p          = PERSONAS[persona_name]
+    p = PERSONAS[persona_name]
+
+    # Persona-spezifischer System-Prompt für Captions
+    caption_system = (
+        f"Du bist {p['name']}, {p['age']}J., Content-Creatorin auf 4Based.\n"
+        f"Persönlichkeit: {p['style']}\n"
+        f"{p['content_style']}\n"
+        "SPRACHE: Antworte IMMER auf Deutsch. Niemals auf Englisch.\n"
+        "Deine Aufgabe: Schreibe eine kurze Post-Caption in deiner eigenen Stimme.\n"
+        "Max 2 Sätze. Kein Markdown. Keine Präfixe wie 'Caption:'. Keine generischen Phrasen.\n"
+        "Antworte NUR mit der fertigen Caption."
+    )
+
     angle_line = f"Blickwinkel: {angle}\n" if angle else ""
     tip_line   = f"Marketing-Tipp einbauen: {tip}\n" if tip else ""
     prompt = (
-        f"Persona: {p['name']}, {p['age']}J., Stil: {p['style']}\n"
         f"Content-Typ: {score.type} | Post-Typ: {post_type}\n"
-        f"Content-Stärken: {', '.join(score.strengths)}\n"
-        f"Persona-Stil: {p['content_style']}\n"
+        f"Stärken des Contents: {', '.join(score.strengths)}\n"
+        f"Kategorie: {score.content_category}\n"
         f"{tip_line}"
         f"{angle_line}"
-        f"Caption-Idee als Basis: {score.caption_idea}\n\n"
-        f"Schreibe die finale Caption als {p['name']} auf Deutsch:"
+        f"Caption-Idee als Ausgangspunkt: {score.caption_idea}\n\n"
+        f"Schreibe jetzt deine Caption als {p['name']}:"
     )
-    result = clean_reply(chat(CAPTION_SYSTEM, prompt, purpose="plan", max_tokens=100))
+    result = clean_reply(chat(caption_system, prompt, purpose="plan", max_tokens=100))
     return result or score.caption_idea or f"Neuer Content von {p['name']} 🔥"
 
 
