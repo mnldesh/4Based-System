@@ -408,10 +408,10 @@ if __name__ == "__main__":
     if not analysis:
         raise SystemExit("[ERROR] Keine Content-Analyse. Zuerst analyzer.py ausführen.")
 
+    from shared.constants import DAYS
     personas = ["hilda", "tia"] if args.persona == "both" else [args.persona]
     today    = datetime.now().strftime("%Y-%m-%d")
-    days     = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"]
-    day      = days[datetime.now().weekday()]
+    day      = DAYS[datetime.now().weekday()]
 
     for p_name in personas:
         plan     = create_day_plan(p_name, analysis, insights, args.posts, args.mass_msgs, args.paid_every)

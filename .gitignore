@@ -16,6 +16,10 @@ state/
 logs/
 data/
 
+# Machine-specific configs
+.mcp.json
+.claude/
+
 # Local artifacts
 *.patch
 *.save

@@ -63,8 +63,9 @@ source .venv/bin/activate
 
 ```json
 {
-  "drive_source_folder_id": "GOOGLE_DRIVE_ORDNER_ID",
-  "drive_output_folder_id": "GOOGLE_DRIVE_ORDNER_ID",
+  "drive_source_folder_hilda": "GOOGLE_DRIVE_ORDNER_ID_HILDA",
+  "drive_source_folder_tia":   "GOOGLE_DRIVE_ORDNER_ID_TIA",
+  "drive_output_folder_id":    "GOOGLE_DRIVE_ORDNER_ID",
   "min_content_score": 6,
   "posts_per_day": 11,
   "mass_msg_count": 4,
@@ -76,7 +77,8 @@ source .venv/bin/activate
 
 | Feld | Bedeutung |
 |---|---|
-| `drive_source_folder_id` | Drive-Ordner mit deinen Medien (Bilder/Videos) |
+| `drive_source_folder_hilda` | Drive-Ordner mit Hilda-Medien (Bilder/Videos) |
+| `drive_source_folder_tia` | Drive-Ordner mit Tia-Medien (Bilder/Videos) |
 | `drive_output_folder_id` | Drive-Ordner für Pläne + Feedback |
 | `min_content_score` | Mindest-Score für Content (1–10, Standard: 6) |
 | `posts_per_day` | Anzahl Posts täglich (Standard: 11) |
@@ -102,7 +104,7 @@ curl -fsSL https://ollama.ai/install.sh | sh
 
 # Modelle laden (einmalig, braucht ~15GB Speicher)
 ollama pull qwen3:14b   # Text-Modell (~8GB)
-ollama pull llava:13b   # Vision-Modell (~8GB)
+ollama pull llava:7b    # Vision-Modell (~5GB)
 
 # Testen ob Ollama läuft
 ollama list
@@ -270,7 +272,7 @@ Ergebnisse in `data/research/insights_DATUM.json`
 ├── scripts/
 │   ├── orchestrator.py
 │   ├── runner.py
-│   ├── planner.py
+│   ├── plan.py
 │   ├── shared/
 │   │   ├── ai_client.py              ← Ollama API Client
 │   │   ├── base_runner.py            ← Runner-Basis-Klasse

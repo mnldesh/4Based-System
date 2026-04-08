@@ -140,9 +140,9 @@ def get_or_create_folder(name: str, parent_id: Optional[str] = None) -> str:
 
 def create_dated_folder(base_name: str, parent_id: Optional[str] = None) -> tuple[str, str]:
     """Erstellt Ordner: z.B. '2025-01-15_Mittwoch_hilda_feedback'."""
+    from shared.constants import DAYS
     now  = datetime.now()
-    days = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag","Sonntag"]
-    name = f"{now.strftime('%Y-%m-%d')}_{days[now.weekday()]}_{base_name}"
+    name = f"{now.strftime('%Y-%m-%d')}_{DAYS[now.weekday()]}_{base_name}"
     return get_or_create_folder(name, parent_id), name
 
 # ─── File Operations ──────────────────────────────────────────────────────────
