@@ -1,5 +1,5 @@
 """
-hilda_runner.py — Hilda Valentine Runner
+runner.py — Persona Runner (Hilda / Tia)
 """
 
 import argparse
@@ -13,23 +13,28 @@ from shared.base_runner import load_account, run_account, save_session
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Hilda Valentine — 4Based Runner")
-    ap.add_argument("--dry-run",      action="store_true", help="Keine Nachrichten senden")
-    ap.add_argument("--once",         action="store_true", help="Nur einen Zyklus")
-    ap.add_argument("--headless",     action="store_true", help="Browser unsichtbar (Server-Modus)")
-    ap.add_argument("--save-session", action="store_true", help="Einmalig einloggen und Session speichern")
+    ap = argparse.ArgumentParser(description="4Based Runner")
+    ap.add_argument("--persona",       required=True, choices=["hilda", "tia"], help="Persona auswählen")
+    ap.add_argument("--dry-run",       action="store_true", help="Keine Nachrichten senden")
+    ap.add_argument("--once",          action="store_true", help="Nur einen Zyklus")
+    ap.add_argument("--headless",      action="store_true", help="Browser unsichtbar (Server-Modus)")
+    ap.add_argument("--save-session",  action="store_true", help="Einmalig einloggen und Session speichern")
     args = ap.parse_args()
 
+    persona = args.persona
+    storage = f"{persona}.storage.json"
+    label = persona.upper()
+
     if args.save_session:
-        asyncio.run(save_session("hilda", "hilda.storage.json"))
+        asyncio.run(save_session(persona, storage))
         return
 
-    account = load_account("hilda", "hilda.storage.json")
+    account = load_account(persona, storage)
 
     stop_event = asyncio.Event()
 
     def shutdown(*_):
-        print("\n[HILDA] Beende...")
+        print(f"\n[{label}] Beende...")
         stop_event.set()
 
     signal.signal(signal.SIGINT,  shutdown)
