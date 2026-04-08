@@ -38,7 +38,7 @@ except ImportError:
 from shared.config import ROOT
 
 # ─── Modell-Konstanten ────────────────────────────────────────────────────────
-CLAUDE_MODEL    = "claude-sonnet-4-5-20251001"        # Primär: Chat/Nachrichten
+CLAUDE_MODEL    = "claude-sonnet-4-6"                 # Primär: Chat/Nachrichten
 PLANNING_MODEL  = "deepseek-r1:7b-qwen-distill-q4_K_M"  # Lokal: Planung/Strategie
 TEXT_MODEL      = "qwen2.5:latest"                    # Ollama-Fallback: Chat
 VISION_MODEL    = "llava:7b"                          # Lokal: Bildanalyse
