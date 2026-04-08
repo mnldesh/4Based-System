@@ -14,11 +14,17 @@ Optimierungen:
 
 import json
 import random
+import sys as _sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+# Sicherstellen dass scripts/ im Suchpfad ist (auch bei direktem Aufruf)
+_SCRIPTS = Path(__file__).resolve().parent.parent
+if str(_SCRIPTS) not in _sys.path:
+    _sys.path.insert(0, str(_SCRIPTS))
 
 from shared.ai_client import chat, parse_json_from_response
 from shared.personas import PERSONAS
@@ -379,6 +385,7 @@ def print_plan(plan: DayPlan) -> None:
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="Content Planner")
+    ap.add_argument("--test", action="store_true", help="Minimal-Test ohne Mediendateien")
     ap.add_argument("--persona",    choices=["hilda", "tia", "both"], default="both")
     ap.add_argument("--analysis",   default=None)
     ap.add_argument("--insights",   default=None)
@@ -387,6 +394,35 @@ if __name__ == "__main__":
     ap.add_argument("--paid-every", type=int, default=5, dest="paid_every")
     ap.add_argument("--output-dir", default=None)
     args = ap.parse_args()
+
+    # ── Minimal-Test ohne Mediendateien ──────────────────────────────────────
+    if args.test:
+        from content.analyzer import ContentScore
+        mock = ContentScore(
+            file             = "test_foto.jpg",
+            type             = "image",
+            score            = 8,
+            production_score = 7,
+            erotic_score     = 5,
+            strengths        = ["gute Beleuchtung", "natürlicher Look"],
+            weaknesses       = [],
+            placement        = "free_teaser",
+            best_for         = ["NEU", "KALT"],
+            content_category = "lifestyle",
+            caption_idea     = "Ein entspannter Abend",
+            hook_idea        = "So sehe ich aus wenn...",
+            persona_fit      = {"hilda": 9, "tia": 6},
+        )
+        persona = args.persona if args.persona != "both" else "hilda"
+        print(f"\n=== Caption Test ({persona}) ===")
+        cap = generate_caption(mock, persona, "free", None, None)
+        print(f"  → {cap}")
+        print(f"\n=== Hashtag Test ({persona}) ===")
+        tags = generate_hashtags(mock, persona)
+        print(f"  → {tags}")
+        print("\n✓ Planner-Test fertig")
+        raise SystemExit(0)
+    # ─────────────────────────────────────────────────────────────────────────
 
     out_dir  = Path(args.output_dir) if args.output_dir else ROOT / "data" / "Plan für die nächsten Tage"
     analysis = load_analysis(Path(args.analysis)) if args.analysis else []
