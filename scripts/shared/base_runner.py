@@ -921,6 +921,48 @@ def _similarity(a: str, b: str) -> float:
     return len(sa & sb) / len(sa | sb)
 
 
+def _quality_check(
+    text:        str,
+    user_type:   str,
+    username:    str,
+    user_states: dict,
+) -> tuple[bool, str]:
+    """
+    Kombinierter Qualitätsfilter: regelbasierte Checks + LLM-Scoring.
+    Gibt (True, "ok") zurück wenn die Nachricht verwendbar ist.
+    """
+    # ── 1. Regelbasierte Schnell-Checks ──────────────────────────────────
+    if not text or len(text) < 5:
+        return False, "empty"
+    if _contains_banned(text):
+        return False, "banned"
+
+    recent = user_states.get(username, {}).get("recent_msgs", [])
+    for prev in recent[-5:]:
+        if _similarity(text, prev) > 0.7:
+            return False, "too_similar"
+
+    # ── 2. LLM-Score (5 Dimensionen) ─────────────────────────────────────
+    SCORE_SYSTEM = (
+        "Bewerte diese Chat-Nachricht auf 5 Dimensionen je 1-10 als JSON.\n"
+        "Dimensionen: natuerlichkeit, relevanz, ton, laenge, originalitaet\n"
+        "Antworte NUR mit JSON ohne weiteren Text:\n"
+        "{\"natuerlichkeit\": X, \"relevanz\": X, \"ton\": X, \"laenge\": X, \"originalitaet\": X}"
+    )
+    raw = chat(SCORE_SYSTEM, f"Nachricht: {text}", purpose="chat", max_tokens=80)
+    try:
+        from shared.ai_client import parse_json_from_response
+        scores = parse_json_from_response(raw) or {}
+        if scores:
+            avg = sum(float(v) for v in scores.values()) / len(scores)
+            if avg < 4.5:
+                return False, f"low_score_{avg:.1f}"
+    except Exception:
+        pass  # Bei Parse-Fehler: Nachricht trotzdem zulassen
+
+    return True, "ok"
+
+
 # ─── Core: Chat verarbeiten ───────────────────────────────────────────────────
 
 COOLDOWN_MINUTES  = 30   # Nicht wieder schreiben wenn letzte Nachricht < 30min

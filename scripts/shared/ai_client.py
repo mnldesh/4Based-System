@@ -360,3 +360,21 @@ def is_reply_usable(text: str) -> bool:
         return False
     alpha = sum(1 for c in text if c.isalpha())
     return alpha >= 5
+
+
+# ─── Lokaler Test ─────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    ensure_ollama()
+
+    print("\n=== Chat-Route (Claude primär) ===")
+    r = chat("Du bist ein Assistent.", "Sag 'Hallo' auf Deutsch.", purpose="chat", max_tokens=20)
+    print(f"  → {r or '[LEER]'}")
+
+    print("\n=== Plan-Route (deepseek-r1) ===")
+    r = chat("Du bist ein Texter.", "Schreib eine kurze Caption.", purpose="plan", max_tokens=50)
+    print(f"  → {r or '[LEER]'}")
+
+    print("\n✓ Fertig")

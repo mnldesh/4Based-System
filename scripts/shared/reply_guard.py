@@ -158,3 +158,24 @@ def check(
             return False, "too_similar"
 
     return True, "ok"
+
+
+# ─── Lokaler Test ─────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    cases = [
+        ("",                         "NEU", {},                                       False, "empty"),
+        ("Hey, wie geht's dir?",     "NEU", {},                                       True,  "ok"),
+        ("Ich stelle mir vor...",    "NEU", {},                                       False, "banned_phrase"),
+        ("ficken heute Nacht",       "NEU", {},                                       False, "too_explicit"),
+        ("Gutschein 30% rabatt",     "NEU", {},                                       False, "premature_sales"),
+        ("Hey, wie geht's dir?",     "NEU", {"recent_msgs": ["Hey, wie geht's dir?"]}, False, "too_similar"),
+    ]
+    failed = 0
+    for text, seg, state, expected, label in cases:
+        ok, reason = check(text, seg, state)
+        status = "✓" if ok == expected else "✗ FAIL"
+        if ok != expected:
+            failed += 1
+        print(f"  {status}  [{label}] → guard='{reason}'")
+    print(f"\n{'✓ Alle Tests OK' if not failed else f'✗ {failed} Tests fehlgeschlagen'}")
