@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from shared.ai_client import make_client, chat_ollama, parse_json_from_response
+from shared.ai_client import chat, parse_json_from_response
 from shared.personas import PERSONAS
 from content.analyzer import ContentScore, load_analysis
 from content.researcher import MarketingInsights, load_insights
@@ -121,10 +121,8 @@ def generate_caption(
     post_type:    str,
     tip:          str,
     angle:        str = "",
-    client=None,
 ) -> str:
     p          = PERSONAS[persona_name]
-    c          = client or make_client()
     angle_line = f"Blickwinkel: {angle}\n" if angle else ""
     prompt = (
         f"Persona: {p['name']}, {p['age']}J., Stil: {p['style']}\n"
@@ -136,19 +134,18 @@ def generate_caption(
         f"\nCaption-Idee als Basis: {score.caption_idea}\n\n"
         f"Schreibe die finale Caption als {p['name']}:"
     )
-    result = chat_ollama(CAPTION_SYSTEM, prompt, c, max_tokens=100)
+    result = chat(CAPTION_SYSTEM, prompt, purpose="plan", max_tokens=100)
     return result or score.caption_idea or f"Neuer Content von {p['name']} 🔥"
 
 
-def generate_hashtags(score: ContentScore, persona_name: str, client=None) -> list[str]:
+def generate_hashtags(score: ContentScore, persona_name: str) -> list[str]:
     p      = PERSONAS[persona_name]
-    c      = client or make_client()
     prompt = (
         f"Persona: {p['name']}, Stil: {p['style']}\n"
         f"Content: {score.type}, Stärken: {', '.join(score.strengths)}\n"
         f"Generiere passende Hashtags:"
     )
-    raw  = chat_ollama(HASHTAG_SYSTEM, prompt, c, max_tokens=150)
+    raw  = chat(HASHTAG_SYSTEM, prompt, purpose="plan", max_tokens=150)
     data = parse_json_from_response(raw) if raw else None
 
     if isinstance(data, list):
@@ -167,11 +164,8 @@ def generate_mass_message(
     target:          str,
     context:         str,
     include_voucher: bool,
-    client=None,
 ) -> str:
     p = PERSONAS[persona_name]
-    c = client or make_client()
-
     voucher_hint = (
         f" Erwähne subtil den {p['voucher_pct']}% Gutschein-Code."
         if include_voucher else ""
@@ -183,7 +177,7 @@ def generate_mass_message(
         f"{voucher_hint}\n"
         f"Schreibe die Massennachricht als {p['name']}:"
     )
-    result = chat_ollama(system, prompt, c, max_tokens=80)
+    result = chat(system, prompt, purpose="plan", max_tokens=80)
     return result or (
         f"Hey, schau dir meinen neuen Content an 🔥" if target == "non_buyer"
         else f"Danke für deine Unterstützung ❤️ Neues für dich!"
@@ -197,10 +191,7 @@ def build_post_schedule(
     tips:          list[str],
     posts_per_day: int,
     paid_every:    int,
-    client=None,
 ) -> list[Post]:
-    c = client or make_client()
-
     # Nach Persona-Fit + Score sortieren
     scored = sorted(
         content,
@@ -226,8 +217,8 @@ def build_post_schedule(
 
     def _generate_post(args) -> tuple[int, Post]:
         idx, content_item, post_type, time_str, tip, angle = args
-        caption  = generate_caption(content_item, persona_name, post_type, tip, angle, c)
-        hashtags = generate_hashtags(content_item, persona_name, c)
+        caption  = generate_caption(content_item, persona_name, post_type, tip, angle)
+        hashtags = generate_hashtags(content_item, persona_name)
         print(f"  Caption [{idx+1}/{posts_per_day}] {time_str} ({post_type}) ✓")
         return idx, Post(
             time      = time_str,
@@ -254,9 +245,7 @@ def build_mass_messages(
     persona_name: str,
     tips:         list[str],
     count:        int,
-    client=None,
 ) -> list[MassMessage]:
-    c     = client or make_client()
     times = _spread_times(MASS_MSG_HOURS, count)
 
     # Zielgruppen + Voucher-Flags vorab bestimmen (nicht thread-abhängig)
@@ -269,7 +258,7 @@ def build_mass_messages(
 
     def _generate_msg(args) -> tuple[int, MassMessage]:
         idx, time_str, target, include_voucher, tip = args
-        text = generate_mass_message(persona_name, target, tip, include_voucher, c)
+        text = generate_mass_message(persona_name, target, tip, include_voucher)
         return idx, MassMessage(
             time            = time_str,
             target          = target,
@@ -296,9 +285,7 @@ def create_day_plan(
     mass_msg_count: int = 4,
     paid_every:     int = 5,
     date:           Optional[str] = None,
-    client=None,
 ) -> DayPlan:
-    c     = client or make_client()
     today = date or datetime.now().strftime("%Y-%m-%d")
     tips  = (insights.top_tips if insights else []) or ["authentisch sein", "Fragen stellen", "Exklusivität betonen"]
 
@@ -311,8 +298,8 @@ def create_day_plan(
     print(f"\n[PLANNER] {persona_name.upper()} — {today}")
     print(f"  {len(persona_content)} passende Inhalte | {posts_per_day} Posts | {mass_msg_count} Massennachrichten")
 
-    posts         = build_post_schedule(persona_content, persona_name, tips, posts_per_day, paid_every, c)
-    mass_messages = build_mass_messages(persona_name, tips, mass_msg_count, c)
+    posts         = build_post_schedule(persona_content, persona_name, tips, posts_per_day, paid_every)
+    mass_messages = build_mass_messages(persona_name, tips, mass_msg_count)
 
     strat = ""
     if insights:

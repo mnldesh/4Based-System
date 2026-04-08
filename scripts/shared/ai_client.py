@@ -1,16 +1,14 @@
 """
-ai_client.py — Multi-Modell-Client
+ai_client.py — Multi-Modell-Client mit zentralem Routing
 
-Modell-Routing:
-  - Chat/Nachrichten:  Claude API (primär) → qwen2.5:latest (Notfall-Fallback)
-  - Planung/Strategie: deepseek-r1:7b-qwen-distill-q4_K_M (Ollama)
-  - Vision/Bilder:     llava:7b (Ollama)
+Öffentliche API:
+  chat(system, user, purpose="chat", max_tokens=500)
+    purpose="chat" → Claude API + qwen2.5 Fallback   (Nachrichten/Antworten)
+    purpose="plan" → deepseek-r1 via Ollama           (Planung/Strategie)
 
-Optimierungen:
-  - Regex auf Modulebene kompiliert
-  - Globale gecachte Clients (lazy init)
-  - Retry mit exponential Backoff
-  - .env für Anthropic API Key
+  vision(image_path, prompt, ...)  → llava:7b via Ollama (Bildanalyse)
+
+Aufrufer müssen keine Modellnamen oder Client-Typen kennen.
 """
 
 import os
@@ -165,24 +163,39 @@ def _with_retry(fn):
     return wrapper
 
 
-# ─── Chat: Claude (primär) + Ollama-Fallback ──────────────────────────────────
+# ─── Öffentlicher Einstiegspunkt: Routing nach purpose ───────────────────────
 
-def chat_claude(
+def chat(
+    system:     str,
+    user:       str,
+    purpose:    str = "chat",
+    max_tokens: int = 500,
+) -> str:
+    """
+    Zentraler Chat-Einstiegspunkt mit automatischem Modell-Routing.
+
+    purpose="chat" → Claude API primär, qwen2.5:latest als Notfall-Fallback
+    purpose="plan" → deepseek-r1:7b via Ollama (Planung, Strategie, Recherche)
+    """
+    if purpose == "plan":
+        return _chat_ollama(system, user, max_tokens=max_tokens, model=PLANNING_MODEL)
+    return _chat_claude(system, user, max_tokens=max_tokens)
+
+
+# ─── Interne Implementierungen ────────────────────────────────────────────────
+
+def _chat_claude(
     system:     str,
     user:       str,
     max_tokens: int = 500,
 ) -> str:
-    """
-    Chat via Claude API (primär).
-    Fällt auf qwen2.5:latest via Ollama zurück wenn Claude nicht verfügbar.
-    """
+    """Claude API mit Ollama-Fallback."""
     if not user:
         return ""
 
     claude = make_claude_client()
     if claude:
         try:
-            import anthropic
             kwargs: dict = dict(
                 model      = CLAUDE_MODEL,
                 max_tokens = max_tokens,
@@ -197,35 +210,31 @@ def chat_claude(
         except Exception as e:
             print(f"[CLAUDE] Fehler — Fallback auf Ollama: {e}")
 
-    # Notfall-Fallback
     print(f"[CLAUDE→OLLAMA] Fallback auf {TEXT_MODEL}")
-    return chat(system, user, max_tokens=max_tokens, model=TEXT_MODEL)
+    return _chat_ollama_raw(system, user, max_tokens=max_tokens, model=TEXT_MODEL)
 
 
-# ─── Chat: Ollama (für Planung/Strategie) ─────────────────────────────────────
-
-def chat_ollama(
+def _chat_ollama(
     system:     str,
     user:       str,
-    client:     Optional[openai.OpenAI] = None,
     max_tokens: int = 500,
     model:      str = PLANNING_MODEL,
 ) -> str:
-    """Chat via Ollama — für Planung, Strategie, Recherche."""
-    return chat(system, user, client=client, max_tokens=max_tokens, model=model)
+    """Ollama-Chat für Planung/Strategie."""
+    return _chat_ollama_raw(system, user, max_tokens=max_tokens, model=model)
 
 
-# ─── Chat: Ollama direkt (intern) ─────────────────────────────────────────────
+# ─── Ollama-Raw-Call (mit Retry) ──────────────────────────────────────────────
 
 @_with_retry
-def chat(
+def _chat_ollama_raw(
     system:     str,
     user:       str,
     client:     Optional[openai.OpenAI] = None,
     max_tokens: int = 500,
     model:      str = TEXT_MODEL,
 ) -> str:
-    """Text-Chat via Ollama. Gibt leeren String bei dauerhaftem Fehler zurück."""
+    """Rohaufruf gegen Ollama OpenAI-kompatible API. Intern — nicht direkt aufrufen."""
     if not system or not user:
         return ""
     c    = client or make_client()

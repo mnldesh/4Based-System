@@ -24,7 +24,7 @@ import openai
 from playwright.async_api import Page, BrowserContext
 
 from shared.personas import PERSONAS
-from shared.ai_client import make_client, clean_reply, TEXT_MODEL, ensure_ollama, chat_claude
+from shared.ai_client import make_client, clean_reply, TEXT_MODEL, ensure_ollama, chat
 from shared.config import ROOT
 from shared import reply_guard
 LOG_PATH        = ROOT / "logs" / "runner.jsonl"
@@ -325,7 +325,7 @@ def extract_user_prefs(history: list[Message]) -> dict:
     )
     try:
         from shared.ai_client import parse_json_from_response
-        raw  = chat_claude("", prompt, max_tokens=200)
+        raw  = chat("", prompt, max_tokens=200)
         data = parse_json_from_response(raw)
         return data if isinstance(data, dict) else {}
     except Exception:
@@ -431,7 +431,7 @@ def detect_content_intent(history: list[Message]) -> bool:
         f"Nur 'ja' oder 'nein'."
     )
     try:
-        answer = chat_claude("", prompt, max_tokens=5)
+        answer = chat("", prompt, max_tokens=5)
         return answer.strip().lower().startswith("ja")
     except Exception:
         return False
@@ -451,7 +451,7 @@ def offer_fits_context(history: list[Message]) -> bool:
         f"Antworte nur mit 'passt' oder 'passt nicht'."
     )
     try:
-        answer = chat_claude("", prompt, max_tokens=5).strip().lower()
+        answer = chat("", prompt, max_tokens=5).strip().lower()
         return answer.startswith("passt") and "nicht" not in answer
     except Exception:
         return True   # Im Zweifel: Angebot senden
@@ -492,7 +492,7 @@ def get_offer_reply(
 
     for attempt in range(1, AI_RETRIES + 1):
         try:
-            text = clean_reply(chat_claude(persona["system"], prompt, max_tokens=250))
+            text = clean_reply(chat(persona["system"], prompt, max_tokens=250))
             if text:
                 return text
         except Exception as e:
@@ -606,7 +606,7 @@ def get_ai_reply(
     max_attempts = AI_RETRIES + 2  # Extra-Versuche falls Guard ablehnt
     for attempt in range(1, max_attempts + 1):
         try:
-            text = clean_reply(chat_claude(persona["system"], prompt, max_tokens=200))
+            text = clean_reply(chat(persona["system"], prompt, max_tokens=200))
             if not text:
                 print(f"  [AI] Leere Antwort (Versuch {attempt}/{max_attempts})")
                 continue
