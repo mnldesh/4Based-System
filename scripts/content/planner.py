@@ -26,7 +26,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS) not in _sys.path:
     _sys.path.insert(0, str(_SCRIPTS))
 
-from shared.ai_client import chat, parse_json_from_response
+from shared.ai_client import chat, parse_json_from_response, clean_reply
 from shared.personas import PERSONAS
 from content.analyzer import ContentScore, load_analysis
 from content.researcher import MarketingInsights, load_insights
@@ -112,13 +112,15 @@ CAPTION_ANGLES = [
 ]
 
 CAPTION_SYSTEM = """Du bist ein Social-Media-Texter für Content-Creator auf Abo-Plattformen.
+SPRACHE: Antworte IMMER auf Deutsch. Niemals auf Englisch oder einer anderen Sprache.
 Schreibe eine kurze, konvertierende Caption im Stil der Persona.
-VERBOTEN: mehr als 3 Sätze, Markdown, generische Phrasen.
-Antworte NUR mit der Caption, ohne Präfix wie "Caption:"."""
+Max 2 Sätze. Kein Markdown. Keine generischen Phrasen. Keine Präfixe wie "Caption:".
+Antworte NUR mit der fertigen Caption."""
 
-HASHTAG_SYSTEM = """Generiere 5-8 relevante Hashtags für einen Content-Creator Post.
-Antworte NUR mit JSON-Array ohne weiteren Text: ["#tag1", "#tag2", ...]
-Mix aus nischig und mid-size. Keine generischen wie #love oder #beautiful."""
+HASHTAG_SYSTEM = """Generiere 5-8 relevante Hashtags für einen deutschen Content-Creator Post.
+Antworte NUR mit einem JSON-Array, kein anderer Text davor oder danach.
+Format: ["#tag1", "#tag2", "#tag3"]
+Regeln: Mix aus nischig und mittelgroß. Keine extrem generischen wie #love #beautiful #instagood."""
 
 
 def generate_caption(
@@ -130,34 +132,43 @@ def generate_caption(
 ) -> str:
     p          = PERSONAS[persona_name]
     angle_line = f"Blickwinkel: {angle}\n" if angle else ""
+    tip_line   = f"Marketing-Tipp einbauen: {tip}\n" if tip else ""
     prompt = (
         f"Persona: {p['name']}, {p['age']}J., Stil: {p['style']}\n"
         f"Content-Typ: {score.type} | Post-Typ: {post_type}\n"
         f"Content-Stärken: {', '.join(score.strengths)}\n"
         f"Persona-Stil: {p['content_style']}\n"
-        f"Marketing-Tipp einbauen: {tip}\n"
+        f"{tip_line}"
         f"{angle_line}"
-        f"\nCaption-Idee als Basis: {score.caption_idea}\n\n"
-        f"Schreibe die finale Caption als {p['name']}:"
+        f"Caption-Idee als Basis: {score.caption_idea}\n\n"
+        f"Schreibe die finale Caption als {p['name']} auf Deutsch:"
     )
-    result = chat(CAPTION_SYSTEM, prompt, purpose="plan", max_tokens=100)
+    result = clean_reply(chat(CAPTION_SYSTEM, prompt, purpose="plan", max_tokens=100))
     return result or score.caption_idea or f"Neuer Content von {p['name']} 🔥"
 
 
 def generate_hashtags(score: ContentScore, persona_name: str) -> list[str]:
+    import re
     p      = PERSONAS[persona_name]
     prompt = (
         f"Persona: {p['name']}, Stil: {p['style']}\n"
-        f"Content: {score.type}, Stärken: {', '.join(score.strengths)}\n"
-        f"Generiere passende Hashtags:"
+        f"Content-Kategorie: {score.content_category}, Typ: {score.type}\n"
+        f"Stärken: {', '.join(score.strengths)}\n"
+        f"Generiere 5-8 passende deutsche Hashtags als JSON-Array:"
     )
     raw  = chat(HASHTAG_SYSTEM, prompt, purpose="plan", max_tokens=150)
     data = parse_json_from_response(raw) if raw else None
 
-    if isinstance(data, list):
-        return [str(t) for t in data]
-    # Fallback
-    return ["#content", "#exclusive", "#subscribe"]
+    if isinstance(data, list) and data:
+        return [str(t) for t in data if str(t).startswith("#")]
+
+    # Regex-Fallback: alle #tags direkt aus dem Text ziehen
+    if raw:
+        tags = re.findall(r"#\w+", raw)
+        if tags:
+            return tags[:8]
+
+    return []
 
 # ─── Mass Message Generator ───────────────────────────────────────────────────
 
