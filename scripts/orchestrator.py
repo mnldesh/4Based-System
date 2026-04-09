@@ -228,7 +228,7 @@ def step_plan(
             loaded = load_plan(out_json)
             plans[persona] = loaded
             if loaded:
-                save_mass_messages(loaded, persona_root)
+                save_mass_messages(loaded, day_folder)
             continue
 
         if not analysis:
@@ -246,7 +246,7 @@ def step_plan(
         )
         save_plan(plan, out_json)
         out_txt.write_text(plan_to_readable_text(plan), encoding="utf-8")
-        save_mass_messages(plan, persona_root)
+        save_mass_messages(plan, day_folder)
         print(f"[STEP 4] Gespeichert: {persona_root.name}/Plan für die nächsten Tage/{day_folder.name}/")
         plans[persona] = plan
 
