@@ -141,7 +141,7 @@ def step_scan_and_analyze(
         if not local.exists() or not any(local.iterdir()):
             print(f"[STEP 1+2] Kein lokales Material in {local}")
             return _load_last()
-        files = [f for f in local.iterdir() if f.is_file()]
+        files = [f for f in local.rglob("*") if f.is_file()]
         print(f"[STEP 1+2] Analysiere {len(files)} lokale Dateien...")
         for f in files:
             _analyze_one(f, client, min_score, results)

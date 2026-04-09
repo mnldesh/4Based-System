@@ -66,12 +66,16 @@ BANNED_PHRASES = [
 
 # ─── Nachrichtentypen für Varianz-Rotation ────────────────────────────────────
 MSG_STYLES = [
-    "frage",           # offene Mini-Frage
-    "reaktion",        # auf etwas aus dem Verlauf reagieren
-    "mini_kompliment", # kurzes ehrliches Kompliment
-    "callback",        # Rückbezug auf früheres Gespräch
-    "tease",           # leichter Flirt/Tease
-    "checkin",         # einfacher Check-in ("hey, alles klar bei dir?")
+    "neugier_luecke",    # Andeutung ohne Auflösung → zwingt zur Nachfrage
+    "mini_provokation",  # These/Annahme über ihn → er will reagieren
+    "selbstoffenbarung", # Kleines Persönliches teilen + Gegenfrage
+    "beobachtung_hook",  # Konkrete Beobachtung + Nachfrage
+    "callback",          # Rückbezug auf Verlauf + Anschlussfrage
+    "mild_challenge",    # Sanft widersprechen/herausfordern
+    "spiegelung",        # Konkretes aus seinem Kontext aufgreifen + Frage
+    "offene_frage",      # Einfache direkte Frage die leicht zu beantworten ist
+    "ueberraschung",     # Unerwartete Aussage die Reaktion erzwingt
+    "geheimnis",         # Kleines Geheimnis andeuten → Neugier
 ]
 PREMIUM_HISTORY_LIMIT = 100
 DEFAULT_HISTORY_LIMIT = 20
@@ -529,10 +533,14 @@ def get_ai_reply(
     # ─── Segment-Strategien mit klarem Ziel ──────────────────────────────
     strategy_map = {
         "NEU": (
-            "ZIEL: Eine Antwort bekommen.\n"
-            "Locker, freundlich, leicht verspielt. Stell eine einfache offene Mini-Frage.\n"
-            "NICHT explizit. KEIN Flirt-Eskalationsversuch. KEIN Sales/Content/Angebot.\n"
-            "Wie wenn du jemand Neues anschreibst der dir aufgefallen ist."
+            "ZIEL: Eine Antwort erzwingen durch Bindungsaufbau — nicht durch Druck.\n"
+            "PRINZIP: Bindung zuerst. Erst Reaktion auslösen, dann alles andere.\n"
+            "PFLICHT: Jede Nachricht MUSS mit einem Hook enden — Anschlussfrage, offene Andeutung, "
+            "oder Aussage die er kommentieren will. Keine Nachricht ohne Aufhänger.\n"
+            "VERBOTEN: 'warst wohl beschäftigt', 'was machst du grad', 'stiller Typ', "
+            "'bin neugierig auf dich', 'du wirkst anders als die anderen' — abgedroschen und wirkungslos.\n"
+            "KEIN Flirt-Eskalationsversuch. KEIN Sales. KEIN Content-Angebot.\n"
+            "Kurz, überraschend, menschlich. Wie ein Satz der hängen bleibt."
         ),
         "KALT": (
             "ZIEL: Gespräch öffnen.\n"
@@ -568,13 +576,17 @@ def get_ai_reply(
 
     # ─── Nachrichtenstil-Anweisung ───────────────────────────────────────
     style_instruction = {
-        "frage":           "Schreib eine kurze offene Frage.",
-        "reaktion":        "Reagiere auf etwas Konkretes aus dem Verlauf.",
-        "mini_kompliment": "Mach ein kurzes ehrliches Kompliment (nicht generisch).",
-        "callback":        "Bezieh dich auf etwas aus einem früheren Gespräch.",
-        "tease":           "Leichter Flirt/Tease — aber subtil, nicht plump.",
-        "checkin":         "Einfacher Check-in, kurz und locker.",
-    }.get(msg_style, "Schreib eine kurze natürliche Nachricht.")
+        "neugier_luecke":    "Deute etwas an ohne es fertig zu erzählen. PFLICHT-ENDE: offene Andeutung die zur Nachfrage einlädt.",
+        "mini_provokation":  "Mach eine kleine Annahme/These über ihn. PFLICHT-ENDE: Frage die ihn widersprechen oder bestätigen lässt.",
+        "selbstoffenbarung": "Teile etwas Kleines Persönliches. PFLICHT-ENDE: Gegenfrage ob er das kennt/ähnlich sieht.",
+        "beobachtung_hook":  "Beobachte etwas Konkretes an ihm. PFLICHT-ENDE: kurze Gegenfrage.",
+        "callback":          "Greif etwas aus dem Verlauf auf. PFLICHT-ENDE: Anschlussfrage daran.",
+        "mild_challenge":    "Stell ihn sanft in Frage oder widersprich leicht. PFLICHT-ENDE: lass ihn reagieren.",
+        "spiegelung":        "Nimm etwas Konkretes aus seinem Namen/Kontext. PFLICHT-ENDE: Frage daran.",
+        "offene_frage":      "Eine konkrete einfache Frage — nicht generisch, nicht austauschbar.",
+        "ueberraschung":     "Sag etwas Unerwartetes das ihn überrascht. PFLICHT-ENDE: kurze Frage oder offene Aussage.",
+        "geheimnis":         "Deute ein kleines Geheimnis an. PFLICHT-ENDE: Andeutung die Neugier weckt.",
+    }.get(msg_style, "Schreib eine kurze natürliche Nachricht die eine Antwort provoziert.")
 
     last_user_msg = user_msgs[-1] if user_msgs else "(keine)"
     last_own_str  = " | ".join(last_own) if last_own else "keine"
@@ -620,7 +632,9 @@ def get_ai_reply(
             # Stil + recent_msgs speichern
             if username not in user_states:
                 user_states[username] = {}
-            user_states[username]["last_msg_style"] = msg_style
+            styles = user_states[username].get("last_msg_styles", [])
+            styles.append(msg_style)
+            user_states[username]["last_msg_styles"] = styles[-10:]
             recent = user_states[username].get("recent_msgs", [])
             recent.append(text)
             user_states[username]["recent_msgs"] = recent[-20:]
@@ -905,9 +919,9 @@ def _contains_banned(text: str) -> bool:
 
 
 def _pick_msg_style(username: str, user_states: dict) -> str:
-    """Wählt einen Nachrichtentyp der sich vom letzten unterscheidet."""
-    last_style = user_states.get(username, {}).get("last_msg_style", "")
-    available  = [s for s in MSG_STYLES if s != last_style]
+    """Wählt einen Nachrichtentyp der sich von den letzten 3 unterscheidet."""
+    recent    = user_states.get(username, {}).get("last_msg_styles", [])
+    available = [s for s in MSG_STYLES if s not in recent[-3:]]
     return random.choice(available) if available else random.choice(MSG_STYLES)
 
 
@@ -998,6 +1012,8 @@ async def process_chat(
 
             # Keine Antwort erhalten UND unter 3h → skippen
             no_reply = last_sent_preview is not None and item.preview == last_sent_preview
+            if not no_reply and last_sent_preview is not None:
+                user_states.setdefault(item.username, {})["last_received_at"] = now_utc().isoformat()
             if no_reply and mins < NO_REPLY_HOURS * 60:
                 print(f"  [SKIP] Keine Antwort ({int(mins)}min, erneut ab {NO_REPLY_HOURS}h)")
                 return False

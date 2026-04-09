@@ -31,7 +31,7 @@ import openai
 
 try:
     from dotenv import load_dotenv
-    load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=True)
 except ImportError:
     pass  # python-dotenv nicht installiert — ANTHROPIC_API_KEY muss als Umgebungsvariable gesetzt sein
 

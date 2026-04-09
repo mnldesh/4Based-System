@@ -399,7 +399,7 @@ def analyze_folder(folder: Path, min_score: int = 6, client=None) -> list[Conten
     # Einmal iterieren, dabei kategorisieren
     images: list[Path] = []
     videos: list[Path] = []
-    for f in folder.iterdir():
+    for f in folder.rglob("*"):
         if not f.is_file():
             continue
         ext = f.suffix.lower()
