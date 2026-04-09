@@ -236,7 +236,7 @@ def analyze_image(path: Path, client=None) -> Optional[ContentScore]:
         return None
 
     c   = client or make_client()
-    raw = vision(path, IMAGE_EVAL_PROMPT, c)
+    raw = vision(path, IMAGE_EVAL_PROMPT, c, max_tokens=500)
     if not raw:
         return None
 
@@ -267,7 +267,7 @@ def analyze_image(path: Path, client=None) -> Optional[ContentScore]:
 def analyze_frame(frame_path: Path, client=None) -> Optional[dict]:
     """Analysiert einen einzelnen Video-Frame."""
     c   = client or make_client()
-    raw = vision(frame_path, VIDEO_FRAME_PROMPT, c)
+    raw = vision(frame_path, VIDEO_FRAME_PROMPT, c, max_tokens=500)
     if not raw:
         return None
     return parse_json_from_response(raw)
