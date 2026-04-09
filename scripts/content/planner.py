@@ -371,6 +371,39 @@ def load_plan(path: Path) -> Optional[DayPlan]:
         return None
 
 
+def save_mass_messages(plan: DayPlan, output_dir: Path) -> None:
+    """
+    Speichert jede Massennachricht als eigene .txt-Datei.
+    Pfad: output_dir/Massennachrichten/{plan.date}_{Wochentag}_{persona}/
+    """
+    from shared.constants import DAYS
+    weekday  = datetime.strptime(plan.date, "%Y-%m-%d").weekday()
+    day_name = DAYS[weekday]
+    day_dir  = output_dir / "Massennachrichten" / f"{plan.date}_{day_name}_{plan.persona}"
+    day_dir.mkdir(parents=True, exist_ok=True)
+
+    paid_count = 0
+    for msg in plan.mass_messages:
+        is_paid = msg.include_voucher
+        if is_paid:
+            paid_count += 1
+            paid_suffix = f"_paid_{paid_count}"
+        else:
+            paid_suffix = ""
+
+        time_str  = msg.time.replace(":", "")
+        base_name = f"mass_{msg.target}_{time_str}{paid_suffix}.txt"
+        out_file  = day_dir / base_name
+
+        lines  = [f"Zeit: {msg.time}", f"Ziel: {msg.target}"]
+        if msg.include_voucher:
+            lines.append("Enthält Gutschein: JA")
+        lines += ["", msg.text]
+
+        out_file.write_text("\n".join(lines), encoding="utf-8")
+        print(f"  [MASS] Gespeichert: {base_name} (Paid={is_paid})")
+
+
 def plan_to_readable_text(plan: DayPlan) -> str:
     lines = [
         f"CONTENT PLAN — {plan.persona.upper()} — {plan.date}",
@@ -466,3 +499,4 @@ if __name__ == "__main__":
         save_plan(plan, out_file)
         out_file.with_suffix(".txt").write_text(plan_to_readable_text(plan), encoding="utf-8")
         print_plan(plan)
+        save_mass_messages(plan, out_dir)
