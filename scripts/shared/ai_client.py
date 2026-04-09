@@ -3,8 +3,8 @@ ai_client.py — Multi-Modell-Client mit zentralem Routing
 
 Öffentliche API:
   chat(system, user, purpose="chat", max_tokens=500)
-    purpose="chat" → Claude API + qwen2.5 Fallback   (Nachrichten/Antworten)
-    purpose="plan" → deepseek-r1 via Ollama           (Planung/Strategie)
+    purpose="chat" → Claude 3.5 Sonnet (Live-Dialoge, Bindung-first)
+    purpose="plan" → Claude 3 Opus     (Planung, Strategie — komplex & stark)
 
   vision(image_path, prompt, ...)  → llava:7b via Ollama (Bildanalyse)
 
@@ -38,8 +38,8 @@ except ImportError:
 from shared.config import ROOT
 
 # ─── Modell-Konstanten ────────────────────────────────────────────────────────
-CLAUDE_MODEL    = "claude-sonnet-4-6"                 # Primär: Chat/Nachrichten
-PLANNING_MODEL  = "qwen2.5:latest"                    # Lokal: Planung/Strategie/Captions
+CLAUDE_MODEL    = "claude-3-5-sonnet-20241022"        # Chat-LLM: Live-Dialoge, Bindung-first
+PLAN_MODEL      = "claude-3-opus-20240229"            # Plan-LLM: Strategie, komplex & stark
 TEXT_MODEL      = "qwen2.5:latest"                    # Ollama-Fallback: Chat
 VISION_MODEL    = "llava:7b"                          # Lokal: Bildanalyse
 
@@ -180,11 +180,11 @@ def chat(
     """
     Zentraler Chat-Einstiegspunkt mit automatischem Modell-Routing.
 
-    purpose="chat" → Claude API primär, qwen2.5:latest als Notfall-Fallback
-    purpose="plan" → deepseek-r1:7b via Ollama (Planung, Strategie, Recherche)
+    purpose="chat" → Claude 3.5 Sonnet primär, qwen2.5 als Notfall-Fallback
+    purpose="plan" → Claude 3 Opus primär (komplex, Strategie), qwen2.5 als Fallback
     """
     if purpose == "plan":
-        return _chat_ollama(system, user, max_tokens=max_tokens, model=PLANNING_MODEL)
+        return _chat_claude(system, user, max_tokens=max_tokens, model=PLAN_MODEL)
     return _chat_claude(system, user, max_tokens=max_tokens)
 
 
@@ -194,6 +194,7 @@ def _chat_claude(
     system:     str,
     user:       str,
     max_tokens: int = 500,
+    model:      str = CLAUDE_MODEL,
 ) -> str:
     """Claude API mit Ollama-Fallback. Bei 500: 1 kurzer Retry, dann Fallback."""
     if not user:
@@ -202,7 +203,7 @@ def _chat_claude(
     claude = make_claude_client()
     if claude:
         kwargs: dict = dict(
-            model      = CLAUDE_MODEL,
+            model      = model,
             max_tokens = max_tokens,
             messages   = [{"role": "user", "content": user}],
         )
@@ -234,9 +235,9 @@ def _chat_ollama(
     system:     str,
     user:       str,
     max_tokens: int = 500,
-    model:      str = PLANNING_MODEL,
+    model:      str = TEXT_MODEL,
 ) -> str:
-    """Ollama-Chat für Planung/Strategie."""
+    """Ollama-Chat (Fallback)."""
     return _chat_ollama_raw(system, user, max_tokens=max_tokens, model=model)
 
 

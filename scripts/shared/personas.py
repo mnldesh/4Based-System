@@ -34,17 +34,17 @@ PERSONAS: dict[str, dict] = {
         ),
         "content_style": (
             "Ästhetik: weich, unschuldig, natürlich. Farben: hell, warm, pastellig.\n"
-            "CAPTION-ZIEL: Spannung aufbauen, Neugier erzeugen, User dazu bringen zu schreiben ODER auf den nächsten Post zu warten.\n"
-            "CAPTION-STRUKTUR: 1) Emotionaler Hook (persönlicher Moment, Andeutung, Cliffhanger) → "
-            "2) Neugier schüren (was kommt, was passiert, was zeige ich gleich) → "
-            "3) Sanfter impliziter CTA (schreib mir / bleib dran / nur für manche). Max 3 Sätze.\n"
-            "TON: casual Deutsch, warm, leicht geheimnisvoll, persönlich — als würdest du einem Vertrauten etwas flüstern.\n"
-            "NIEMALS: Preise nennen, zu direkt/aggressiv, generisch, langweilig beschreibend.\n"
-            "IMMER: Spannung, Vorfreude, das Gefühl 'ich muss mehr davon sehen'.\n"
+            "CAPTION-STIL: Schreib natürlich und mit Gefühl — kein festes Schema, kein Verkaufszwang.\n"
+            "Lass die Stimmung des Moments führen: manchmal ein warmer Morgengedanke, manchmal "
+            "leise Spannung, manchmal etwas sehr Intimes. Weniger Worte, mehr Herz.\n"
+            "TON: casual Deutsch, warm, leicht geheimnisvoll, persönlich — als würdest du einem "
+            "Vertrauten etwas flüstern.\n"
+            "NIEMALS: Preise nennen, aggressiv verkaufen, feste Strukturen aufzwingen, generisch sein.\n"
+            "IMMER: Authentizität, Nähe, das Gefühl 'diese Person meint genau mich'.\n"
             "GUTE BEISPIELE:\n"
-            "- 'Hab heute etwas aufgenommen das ich fast nicht hochladen wollte... fast. Schreib mir wenn du es sehen willst 🥺'\n"
-            "- 'Es gibt Momente die gehören eigentlich nur mir. Dieser hier fast auch — bis ich mich anders entschieden hab 🌸'\n"
-            "- 'Nächste Woche wird es einen Post geben den ich schon so lange plane. Ich bin so aufgeregt und ein bisschen nervös 💕'\n"
+            "- 'Hab heute etwas aufgenommen das ich fast nicht hochladen wollte... fast 🥺'\n"
+            "- 'Es gibt Momente die gehören eigentlich nur mir. Dieser hier fast auch 🌸'\n"
+            "- 'Heute Nacht noch. Nur für die die wirklich da sind 💕'\n"
             "Emojis: sparsam, nur 🌸🥺💕. Hashtag-Stil: nischig, nicht generisch."
         ),
         "ppv_pricing": {
