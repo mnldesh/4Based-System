@@ -480,6 +480,10 @@ def load_analysis(path: Path) -> list[ContentScore]:
             d.setdefault("content_category", "softcore")
             d.setdefault("hook_idea",        "")
             d.setdefault("video_meta",       {})
+            d.setdefault("persona_fit",      {"hilda": 5, "tia": 5})
+            # Rückwärtskompatibilität: ältere Dateien haben persona_fit als Liste
+            if isinstance(d.get("persona_fit"), list):
+                d["persona_fit"] = {"hilda": 5, "tia": 5}
             # Nur bekannte Felder übergeben
             known = {f.name for f in ContentScore.__dataclass_fields__.values()}
             results.append(ContentScore(**{k: v for k, v in d.items() if k in known}))
