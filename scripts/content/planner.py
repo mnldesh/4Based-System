@@ -2,9 +2,10 @@
 planner.py — Autonomer Content-Plan Generator
 
 Erstellt täglich einen vollständigen Content-Plan:
-  - 10-12 Posts/Tag (alle 3-7 Posts ein Paid-Post)
-  - 3-6 Massennachrichten/Tag (getrennt: Käufer / Nicht-Käufer)
-  - Passende Captions, Uhrzeiten, Hashtags
+  - 10-12 Posts/Tag über 5 Zeitfenster (morgen→nacht) mit Spannungsaufbau
+  - Max. 3 Paid-Posts/Tag (nur abend/spaet_abend/nacht)
+  - 4-6 Massennachrichten/Tag, max. 2 paid (Käufer / Nicht-Käufer)
+  - Mood-basierte Captions (kein festes Hook→CTA-Schema)
   - Basiert auf Content-Analyse + Marketing-Recherche
 
 Optimierungen:
@@ -33,11 +34,34 @@ from content.researcher import MarketingInsights, load_insights
 
 from shared.config import ROOT
 
-# Peak-Posting-Zeiten: 18:00–04:00 (Abend/Nacht) + 04:00–08:00 (früh morgens)
-PEAK_HOURS     = [18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7]
-MASS_MSG_HOURS = [18, 21, 0, 4]
-POST_WORKERS   = 6   # Parallele LLM-Calls für Posts
-MSG_WORKERS    = 4   # Parallele LLM-Calls für Massennachrichten
+# 5 Zeitfenster mit emotionalem Tagesbogen
+TIME_ZONES = [
+    {"name": "morgen",      "hours": [8, 9, 10, 11, 12],       "label": "warm, sanft, BTS/Lifestyle"},
+    {"name": "mittag",      "hours": [14, 15, 16, 17],          "label": "Teaser, Andeutungen, Neugier"},
+    {"name": "abend",       "hours": [18, 19, 20, 21],          "label": "intensiv, verführerisch"},
+    {"name": "spaet_abend", "hours": [22, 23],                  "label": "Höhepunkte, PPV/Gutscheine"},
+    {"name": "nacht",       "hours": [0, 1, 2, 3, 4, 5, 6, 7], "label": "sehr intensiv, sehr intim"},
+]
+
+# Post-Verteilung je Zeitfenster (für 10/11/12 Posts)
+ZONE_DISTRIBUTION = {
+    10: {"morgen": 2, "mittag": 2, "abend": 2, "spaet_abend": 2, "nacht": 2},
+    11: {"morgen": 3, "mittag": 2, "abend": 2, "spaet_abend": 2, "nacht": 2},
+    12: {"morgen": 3, "mittag": 2, "abend": 3, "spaet_abend": 2, "nacht": 2},
+}
+
+# Fester Massennachricht-Schedule: (Stunde, Zielgruppe, is_paid)
+# Exakt 2 paid-Nachrichten (22 Uhr Käufer-PPV, 00 Uhr Nicht-Käufer-Gutschein)
+MASS_MSG_SCHEDULE = [
+    (18, "non_buyer", False),   # warm, Bezug auf Tages-Posts
+    (20, "non_buyer", False),   # Beziehungs-/Nähe-Nachricht
+    (22, "buyer",     True),    # paid_1: PPV/Stammkunden-Angebot
+    (0,  "non_buyer", True),    # paid_2: Gutschein für Nicht-Käufer
+    (4,  "non_buyer", False),   # nächtlicher Flirt/Nähe
+]
+
+POST_WORKERS = 6   # Parallele LLM-Calls für Posts
+MSG_WORKERS  = 4   # Parallele LLM-Calls für Massennachrichten
 
 # ─── Data types ───────────────────────────────────────────────────────────────
 
@@ -50,6 +74,7 @@ class Post:
     caption:   str
     hashtags:  list[str]
     best_for:  list[str]
+    mood:      str = ""     # "morgen"|"mittag"|"abend"|"spaet_abend"|"nacht"
 
 
 @dataclass
@@ -70,27 +95,42 @@ class DayPlan:
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
-def _spread_times(hours_pool: list[int], count: int) -> list[str]:
+def _build_zone_schedule(posts_per_day: int) -> list[tuple[str, str]]:
     """
-    Wählt `count` Uhrzeiten aus dem Pool.
-    Wenn count > len(pool): erlaubte Stunden wiederverwenden mit kleinem Versatz.
-    Gibt sortierte "HH:MM" Strings zurück.
+    Erstellt eine sortierte Liste von (time_str, mood_name) für alle Posts.
+    Verteilt Posts über 5 Zeitfenster gemäß ZONE_DISTRIBUTION.
+    Sortierung: 08–23 Uhr vor 00–07 Uhr (natürlicher Tagesbogen).
     """
-    pool = list(hours_pool)
-    if count <= len(pool):
-        chosen = sorted(random.sample(pool, count))
-    else:
-        # Zu viele Posts → Stunden wiederverwenden, unterschiedliche Minuten
-        chosen = sorted((pool * ((count // len(pool)) + 1))[:count])
+    dist = ZONE_DISTRIBUTION.get(posts_per_day)
+    if not dist:
+        # Proportionaler Fallback für andere Post-Anzahlen
+        ratios = [0.25, 0.17, 0.25, 0.17, 0.17]
+        counts = [max(1, round(posts_per_day * r)) for r in ratios]
+        while sum(counts) > posts_per_day:
+            counts[counts.index(max(counts))] -= 1
+        while sum(counts) < posts_per_day:
+            counts[counts.index(min(counts))] += 1
+        dist = {z["name"]: c for z, c in zip(TIME_ZONES, counts)}
 
-    result = []
-    hour_counts: dict[int, int] = {}
-    for h in chosen:
-        idx    = hour_counts.get(h, 0)
-        minute = (idx * 20) % 60   # 0, 20, 40, dann wieder 0
-        result.append(f"{h:02d}:{minute:02d}")
-        hour_counts[h] = idx + 1
+    result: list[tuple[str, str]] = []
+    for zone in TIME_ZONES:
+        count = dist.get(zone["name"], 0)
+        hours = zone["hours"]
+        # Stunden wählen — bei Überlauf wiederverwenden mit Minuten-Versatz
+        if count <= len(hours):
+            chosen = sorted(random.sample(hours, count))
+        else:
+            chosen = sorted((hours * ((count // len(hours)) + 1))[:count])
 
+        hour_counts: dict[int, int] = {}
+        for h in chosen:
+            idx    = hour_counts.get(h, 0)
+            minute = (idx * 20) % 60
+            result.append((f"{h:02d}:{minute:02d}", zone["name"]))
+            hour_counts[h] = idx + 1
+
+    # Tageschronologisch sortieren: 08–23 vor 00–07
+    result.sort(key=lambda x: int(x[0][:2]) if int(x[0][:2]) >= 8 else int(x[0][:2]) + 24)
     return result
 
 # ─── Caption & Hashtag Generator ──────────────────────────────────────────────
@@ -111,16 +151,39 @@ CAPTION_ANGLES = [
     "Cliffhanger — Fortsetzung folgt, was passiert als nächstes",
 ]
 
-CAPTION_SYSTEM = """Du bist ein Social-Media-Texter für Content-Creator auf Abo-Plattformen.
-SPRACHE: Antworte IMMER auf Deutsch. Niemals auf Englisch oder einer anderen Sprache.
-Schreibe eine kurze, konvertierende Caption im Stil der Persona.
-Max 2 Sätze. Kein Markdown. Keine generischen Phrasen. Keine Präfixe wie "Caption:".
-Antworte NUR mit der fertigen Caption."""
-
 HASHTAG_SYSTEM = """Generiere 5-8 relevante Hashtags für einen deutschen Content-Creator Post.
 Antworte NUR mit einem JSON-Array, kein anderer Text davor oder danach.
 Format: ["#tag1", "#tag2", "#tag3"]
 Regeln: Mix aus nischig und mittelgroß. Keine extrem generischen wie #love #beautiful #instagood."""
+
+# Stimmungsbasierte Caption-Anleitung je Tageszeit (kein festes Schema)
+MOOD_CAPTION_STYLE: dict[str, str] = {
+    "morgen": (
+        "Es ist Morgen — Hilda beginnt ihren Tag. "
+        "Schreib eine warme, natürliche Caption — wie ein guter Morgengruß an einen Vertrauten. "
+        "Sanft, nahbar, leicht schüchtern. Kein Verkauf, kein Druck."
+    ),
+    "mittag": (
+        "Nachmittagsstimmung — etwas baut sich auf. "
+        "Schreib eine neugierig machende Caption, die andeutet ohne aufzulösen. "
+        "Leichter Cliffhanger. Neugier wecken, nichts verraten."
+    ),
+    "abend": (
+        "Abendstimmung — es wird intensiver. "
+        "Schreib eine verführerische, persönliche Caption. "
+        "Einladend, leicht intensiv — bei paid Posts ein sanfter Hinweis auf etwas Besonderes, ohne Preis."
+    ),
+    "spaet_abend": (
+        "Später Abend — Höhepunkt des Tages. "
+        "Schreib eine intensive, warme Caption. "
+        "Bei paid Posts: dezente Einladung zu exklusivem Content — ohne Preis zu nennen."
+    ),
+    "nacht": (
+        "Nacht — sehr intim, sehr persönlich. "
+        "Schreib wie ein Flüstern. Sehr nah, sehr privat, sehr romantisch. "
+        "Als würde Hilda nur mit dieser einen Person sprechen."
+    ),
+}
 
 
 def generate_caption(
@@ -129,34 +192,35 @@ def generate_caption(
     post_type:    str,
     tip:          str,
     angle:        str = "",
+    mood:         str = "",
 ) -> str:
     p = PERSONAS[persona_name]
+    mood_guidance = MOOD_CAPTION_STYLE.get(mood, "")
 
-    # Persona-spezifischer System-Prompt für Captions
     caption_system = (
         f"Du bist {p['name']}, {p['age']}J., Content-Creatorin auf 4Based.\n"
         f"Persönlichkeit: {p['style']}\n"
         f"{p['content_style']}\n"
         "SPRACHE: Antworte IMMER auf Deutsch. Niemals auf Englisch.\n"
-        "AUFGABE: Schreibe eine Marketing-Caption die Spannung aufbaut und User dazu bringt zu schreiben ODER auf den nächsten Post zu warten.\n"
-        "STRUKTUR: Hook (persönlicher Moment/Andeutung) → Neugier/Spannung → impliziter CTA.\n"
-        "VERBOTEN: Preise, generische Beschreibungen, langweilige Zusammenfassungen, englische Wörter.\n"
+        "AUFGABE: Schreib eine Caption die sich natürlich anfühlt — kein festes Schema, kein Verkaufsdruck.\n"
+        f"{mood_guidance}\n"
+        "VERBOTEN: Preise nennen, feste Strukturen wie Hook-Teaser-CTA, generische Phrasen, englische Wörter.\n"
         "Kein Markdown. Keine Präfixe. Max 3 Sätze.\n"
         "Antworte NUR mit der fertigen Caption."
     )
 
-    angle_line = f"Blickwinkel für Spannung: {angle}\n" if angle else ""
-    tip_line   = f"Marketing-Ansatz: {tip}\n" if tip else ""
+    angle_line = f"Blickwinkel: {angle}\n" if angle else ""
+    tip_line   = f"Ansatz: {tip}\n" if tip else ""
     prompt = (
         f"Content-Typ: {score.type} | Post-Typ: {post_type} | Kategorie: {score.content_category}\n"
         f"Was macht diesen Content besonders: {', '.join(score.strengths)}\n"
-        f"Hook-Idee als Inspiration: {score.hook_idea}\n"
+        f"Inspiration: {score.hook_idea}\n"
         f"{tip_line}"
         f"{angle_line}"
-        f"Schreibe jetzt eine spannungsgeladene Caption als {p['name']} die Lust auf mehr macht:"
+        f"Schreib jetzt eine Caption als {p['name']}:"
     )
     result = clean_reply(chat(caption_system, prompt, purpose="plan", max_tokens=120))
-    return result or score.caption_idea or f"Neuer Content von {p['name']} 🔥"
+    return result or score.caption_idea or f"Neuer Content von {p['name']} 🌸"
 
 
 def generate_hashtags(score: ContentScore, persona_name: str) -> list[str]:
@@ -215,11 +279,11 @@ def generate_mass_message(
 # ─── Plan Builder ─────────────────────────────────────────────────────────────
 
 def build_post_schedule(
-    content:       list[ContentScore],
-    persona_name:  str,
-    tips:          list[str],
-    posts_per_day: int,
-    paid_every:    int,
+    content:        list[ContentScore],
+    persona_name:   str,
+    tips:           list[str],
+    posts_per_day:  int,
+    max_paid_posts: int = 3,
 ) -> list[Post]:
     # Nach Persona-Fit + Score sortieren
     scored = sorted(
@@ -228,27 +292,31 @@ def build_post_schedule(
         reverse=True,
     )
 
-    times = _spread_times(PEAK_HOURS, posts_per_day)
+    schedule = _build_zone_schedule(posts_per_day)
 
-    # Alle Aufgaben vorbereiten — Winkel rotieren bei wiederholtem Content
+    # Paid-Slots aus abend/spaet_abend/nacht wählen (max. max_paid_posts)
+    paid_zones = {"abend", "spaet_abend", "nacht"}
+    eligible   = [i for i, (_, mood) in enumerate(schedule) if mood in paid_zones]
+    paid_idx   = set(random.sample(eligible, min(max_paid_posts, len(eligible))))
+
+    # Aufgaben vorbereiten — Winkel rotieren bei wiederholtem Content
     file_use_count: dict[str, int] = {}
     work_items = []
-    for i in range(posts_per_day):
+    for i, (time_str, mood) in enumerate(schedule):
         content_item = scored[i % len(scored)]
-        post_type    = "paid" if (i + 1) % paid_every == 0 else "free"
+        post_type    = "paid" if i in paid_idx else "free"
         use_count    = file_use_count.get(content_item.file, 0)
-        angle        = CAPTION_ANGLES[use_count % len(CAPTION_ANGLES)]
-        # Tip versetzt: beim 2. Einsatz derselben Datei anderen Tip nehmen
+        angle        = CAPTION_ANGLES[(i + use_count) % len(CAPTION_ANGLES)]
         tip_idx      = (i + use_count * 3) % len(tips) if tips else 0
         tip          = tips[tip_idx] if tips else "authentisch sein"
         file_use_count[content_item.file] = use_count + 1
-        work_items.append((i, content_item, post_type, times[i], tip, angle))
+        work_items.append((i, content_item, post_type, time_str, mood, tip, angle))
 
     def _generate_post(args) -> tuple[int, Post]:
-        idx, content_item, post_type, time_str, tip, angle = args
-        caption  = generate_caption(content_item, persona_name, post_type, tip, angle)
+        idx, content_item, post_type, time_str, mood, tip, angle = args
+        caption  = generate_caption(content_item, persona_name, post_type, tip, angle, mood)
         hashtags = generate_hashtags(content_item, persona_name)
-        print(f"  Caption [{idx+1}/{posts_per_day}] {time_str} ({post_type}) ✓")
+        print(f"  Caption [{idx+1}/{posts_per_day}] {time_str} [{mood}] ({post_type}) ✓")
         return idx, Post(
             time      = time_str,
             file      = content_item.file,
@@ -257,6 +325,7 @@ def build_post_schedule(
             caption   = caption,
             hashtags  = hashtags,
             best_for  = content_item.best_for,
+            mood      = mood,
         )
 
     # Alle Caption+Hashtag Calls parallel
@@ -275,34 +344,29 @@ def build_mass_messages(
     tips:         list[str],
     count:        int,
 ) -> list[MassMessage]:
-    times = _spread_times(MASS_MSG_HOURS, count)
-
-    # Zielgruppen + Voucher-Flags vorab bestimmen (nicht thread-abhängig)
-    assignments = []
-    for i in range(count):
-        target          = "buyer" if random.random() < 0.4 else "non_buyer"
-        include_voucher = (target == "non_buyer") and (random.random() < 0.4)
-        tip             = tips[i % len(tips)] if tips else "neuen Content teilen"
-        assignments.append((i, times[i], target, include_voucher, tip))
+    # Festen Schedule verwenden (bis zu count Einträge, max. 2 paid)
+    schedule = MASS_MSG_SCHEDULE[:count]
 
     def _generate_msg(args) -> tuple[int, MassMessage]:
-        idx, time_str, target, include_voucher, tip = args
-        text = generate_mass_message(persona_name, target, tip, include_voucher)
+        idx, (hour, target, is_paid) = args
+        time_str = f"{hour:02d}:00"
+        context  = tips[idx % len(tips)] if tips else "neuen Content teilen"
+        text     = generate_mass_message(persona_name, target, context, include_voucher=is_paid)
         return idx, MassMessage(
             time            = time_str,
             target          = target,
             text            = text,
-            include_voucher = include_voucher,
+            include_voucher = is_paid,
         )
 
     results: dict[int, MassMessage] = {}
     with ThreadPoolExecutor(max_workers=MSG_WORKERS) as ex:
-        futures = {ex.submit(_generate_msg, a): a[0] for a in assignments}
+        futures = {ex.submit(_generate_msg, (i, sched)): i for i, sched in enumerate(schedule)}
         for future in as_completed(futures):
             idx, msg = future.result()
             results[idx] = msg
 
-    return [results[i] for i in range(count)]
+    return [results[i] for i in range(len(schedule))]
 
 # ─── Main Plan Function ───────────────────────────────────────────────────────
 
@@ -310,10 +374,11 @@ def create_day_plan(
     persona_name:   str,
     content:        list[ContentScore],
     insights:       Optional[MarketingInsights] = None,
-    posts_per_day:  int = 11,
-    mass_msg_count: int = 4,
-    paid_every:     int = 5,
+    posts_per_day:  int = 12,
+    mass_msg_count: int = 5,
+    max_paid_posts: int = 3,
     date:           Optional[str] = None,
+    **_kwargs,      # ignoriert unbekannte Parameter (z.B. client= vom Orchestrator)
 ) -> DayPlan:
     today = date or datetime.now().strftime("%Y-%m-%d")
     tips  = (insights.top_tips if insights else []) or ["authentisch sein", "Fragen stellen", "Exklusivität betonen"]
@@ -325,9 +390,9 @@ def create_day_plan(
         persona_content = content
 
     print(f"\n[PLANNER] {persona_name.upper()} — {today}")
-    print(f"  {len(persona_content)} passende Inhalte | {posts_per_day} Posts | {mass_msg_count} Massennachrichten")
+    print(f"  {len(persona_content)} passende Inhalte | {posts_per_day} Posts | {mass_msg_count} Massennachrichten | max. {max_paid_posts} paid")
 
-    posts         = build_post_schedule(persona_content, persona_name, tips, posts_per_day, paid_every)
+    posts         = build_post_schedule(persona_content, persona_name, tips, posts_per_day, max_paid_posts)
     mass_messages = build_mass_messages(persona_name, tips, mass_msg_count)
 
     strat = ""
@@ -413,9 +478,10 @@ def plan_to_readable_text(plan: DayPlan) -> str:
         f"POSTS ({len(plan.posts)}):",
     ]
     for p in plan.posts:
-        paid = "[PAID] " if p.post_type == "paid" else "       "
+        paid       = "[PAID] " if p.post_type == "paid" else "       "
+        mood_label = f" [{p.mood}]" if p.mood else ""
         lines += [
-            f"  {p.time} {paid}Score:{p.score}/10",
+            f"  {p.time}{mood_label} {paid}Score:{p.score}/10",
             f"  Caption:  {p.caption}",
             f"  Hashtags: {' '.join(p.hashtags)}",
             f"  Datei:    {Path(p.file).name}",
@@ -445,9 +511,9 @@ if __name__ == "__main__":
     ap.add_argument("--persona",    choices=["hilda", "tia", "both"], default="both")
     ap.add_argument("--analysis",   default=None)
     ap.add_argument("--insights",   default=None)
-    ap.add_argument("--posts",      type=int, default=11)
-    ap.add_argument("--mass-msgs",  type=int, default=4)
-    ap.add_argument("--paid-every", type=int, default=5, dest="paid_every")
+    ap.add_argument("--posts",     type=int, default=12)
+    ap.add_argument("--mass-msgs", type=int, default=5)
+    ap.add_argument("--max-paid",  type=int, default=3, dest="max_paid")
     ap.add_argument("--output-dir", default=None)
     args = ap.parse_args()
 
@@ -472,7 +538,7 @@ if __name__ == "__main__":
         )
         persona = args.persona if args.persona != "both" else "hilda"
         print(f"\n=== Caption Test ({persona}) ===")
-        cap = generate_caption(mock, persona, "free", None, None)
+        cap = generate_caption(mock, persona, "free", "", "", "morgen")
         print(f"  → {cap}")
         print(f"\n=== Hashtag Test ({persona}) ===")
         tags = generate_hashtags(mock, persona)
@@ -494,7 +560,7 @@ if __name__ == "__main__":
     day      = DAYS[datetime.now().weekday()]
 
     for p_name in personas:
-        plan     = create_day_plan(p_name, analysis, insights, args.posts, args.mass_msgs, args.paid_every)
+        plan     = create_day_plan(p_name, analysis, insights, args.posts, args.mass_msgs, args.max_paid)
         out_file = out_dir / p_name.capitalize() / f"{today}_{day}" / f"plan_{p_name}_{today}.json"
         save_plan(plan, out_file)
         out_file.with_suffix(".txt").write_text(plan_to_readable_text(plan), encoding="utf-8")
