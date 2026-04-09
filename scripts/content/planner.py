@@ -219,7 +219,7 @@ def generate_caption(
         f"{angle_line}"
         f"Schreib jetzt eine Caption als {p['name']}:"
     )
-    result = clean_reply(chat(caption_system, prompt, purpose="plan", max_tokens=120))
+    result = clean_reply(chat(caption_system, prompt, purpose="chat", max_tokens=120))
     return result or score.caption_idea or f"Neuer Content von {p['name']} 🌸"
 
 
@@ -232,7 +232,7 @@ def generate_hashtags(score: ContentScore, persona_name: str) -> list[str]:
         f"Stärken: {', '.join(score.strengths)}\n"
         f"Generiere 5-8 passende deutsche Hashtags als JSON-Array:"
     )
-    raw  = chat(HASHTAG_SYSTEM, prompt, purpose="plan", max_tokens=150)
+    raw  = chat(HASHTAG_SYSTEM, prompt, purpose="chat", max_tokens=150)
     data = parse_json_from_response(raw) if raw else None
 
     if isinstance(data, list) and data:
@@ -270,7 +270,7 @@ def generate_mass_message(
         f"{voucher_hint}\n"
         f"Schreibe die Massennachricht als {p['name']}:"
     )
-    result = chat(system, prompt, purpose="plan", max_tokens=80)
+    result = chat(system, prompt, purpose="chat", max_tokens=80)
     return result or (
         f"Hey, schau dir meinen neuen Content an 🔥" if target == "non_buyer"
         else f"Danke für deine Unterstützung ❤️ Neues für dich!"
