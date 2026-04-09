@@ -23,3 +23,6 @@ data/
 # Local artifacts
 *.patch
 *.save
+config/google_oauth_client.json
+config/google_oauth_token.json
+config/google_service_account.json
