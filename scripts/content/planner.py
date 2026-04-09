@@ -438,13 +438,9 @@ def load_plan(path: Path) -> Optional[DayPlan]:
 
 def save_mass_messages(plan: DayPlan, output_dir: Path) -> None:
     """
-    Speichert jede Massennachricht als eigene .txt-Datei.
-    Pfad: output_dir/Massennachrichten/{plan.date}_{Wochentag}_{persona}/
+    Speichert jede Massennachricht als eigene .txt-Datei direkt in output_dir.
     """
-    from shared.constants import DAYS
-    weekday  = datetime.strptime(plan.date, "%Y-%m-%d").weekday()
-    day_name = DAYS[weekday]
-    day_dir  = output_dir / "Massennachrichten" / f"{plan.date}_{day_name}_{plan.persona}"
+    day_dir = output_dir
     day_dir.mkdir(parents=True, exist_ok=True)
 
     paid_count = 0
