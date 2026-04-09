@@ -998,6 +998,8 @@ async def process_chat(
 
             # Keine Antwort erhalten UND unter 3h → skippen
             no_reply = last_sent_preview is not None and item.preview == last_sent_preview
+            if not no_reply and last_sent_preview is not None:
+                user_states.setdefault(item.username, {})["last_received_at"] = now_utc().isoformat()
             if no_reply and mins < NO_REPLY_HOURS * 60:
                 print(f"  [SKIP] Keine Antwort ({int(mins)}min, erneut ab {NO_REPLY_HOURS}h)")
                 return False
