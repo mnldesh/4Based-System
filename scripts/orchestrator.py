@@ -136,7 +136,8 @@ def step_scan_and_analyze(
     results:  list[ContentScore] = []
 
     if not use_drive:
-        local = DOWNLOAD_DIR / "media"
+        local_override = cfg.get(f"local_media_folder_{persona_name}", "") if persona_name else ""
+        local = Path(local_override) if local_override else DOWNLOAD_DIR / "media"
         if not local.exists() or not any(local.iterdir()):
             print(f"[STEP 1+2] Kein lokales Material in {local}")
             return _load_last()
