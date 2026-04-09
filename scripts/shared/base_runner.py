@@ -260,7 +260,7 @@ async def save_session(name: str, state_file: str) -> None:
         await browser.close()
 
     print(f"\n[{name.upper()}] Session gespeichert: {state_path}")
-    print(f"  Jetzt starten mit: python scripts/{name}_runner.py")
+    print(f"  Jetzt starten mit: ./start-{name}.sh --dry-run --once")
 
 # ─── Persistente User-States ─────────────────────────────────────────────────
 
