@@ -8,7 +8,7 @@ if [ ! -f ".venv/bin/python" ]; then
     exit 1
 fi
 
-if [ ! -f "hilda.storage.json" ]; then
+if [[ ! " $* " =~ " --save-session " ]] && [ ! -f "hilda.storage.json" ]; then
     echo "[ERROR] Keine Session für Hilda — erst einloggen:"
     echo "  ./start-hilda.sh --save-session"
     exit 1

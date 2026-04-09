@@ -8,7 +8,7 @@ if [ ! -f ".venv/bin/python" ]; then
     exit 1
 fi
 
-if [ ! -f "tia.storage.json" ]; then
+if [[ ! " $* " =~ " --save-session " ]] && [ ! -f "tia.storage.json" ]; then
     echo "[ERROR] Keine Session für Tia — erst einloggen:"
     echo "  ./start-tia.sh --save-session"
     exit 1
