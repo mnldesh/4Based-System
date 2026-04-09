@@ -4,7 +4,7 @@ ai_client.py — Multi-Modell-Client mit zentralem Routing
 Öffentliche API:
   chat(system, user, purpose="chat", max_tokens=500)
     purpose="chat" → Claude 3.5 Sonnet (Live-Dialoge, Bindung-first)
-    purpose="plan" → Claude 3 Opus     (Planung, Strategie — komplex & stark)
+    purpose="plan" → Claude Opus 4     (Planung, Strategie — komplex & stark)
 
   vision(image_path, prompt, ...)  → llava:7b via Ollama (Bildanalyse)
 
@@ -39,7 +39,8 @@ from shared.config import ROOT
 
 # ─── Modell-Konstanten ────────────────────────────────────────────────────────
 CLAUDE_MODEL    = "claude-3-5-sonnet-20241022"        # Chat-LLM: Live-Dialoge, Bindung-first
-PLAN_MODEL      = "claude-3-opus-20240229"            # Plan-LLM: Strategie, komplex & stark
+OPUS_4_MODEL    = "claude-opus-4-20250514"            # Opus 4: Höchste Kapazität, Strategie
+PLAN_MODEL      = OPUS_4_MODEL                        # Plan-LLM: Strategie, komplex & stark
 TEXT_MODEL      = "qwen2.5:latest"                    # Ollama-Fallback: Chat
 VISION_MODEL    = "llava:7b"                          # Lokal: Bildanalyse
 
@@ -181,7 +182,7 @@ def chat(
     Zentraler Chat-Einstiegspunkt mit automatischem Modell-Routing.
 
     purpose="chat" → Claude 3.5 Sonnet primär, qwen2.5 als Notfall-Fallback
-    purpose="plan" → Claude 3 Opus primär (komplex, Strategie), qwen2.5 als Fallback
+    purpose="plan" → Claude Opus 4 primär (komplex, Strategie), qwen2.5 als Fallback
     """
     if purpose == "plan":
         return _chat_claude(system, user, max_tokens=max_tokens, model=PLAN_MODEL)
