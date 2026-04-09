@@ -365,7 +365,8 @@ def main() -> None:
     _executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1)
     research_future: Future = _executor.submit(step_research, cfg, args.skip_research)
 
-    analysis = step_scan_and_analyze(cfg, use_drive, client)
+    scan_persona = personas[0] if len(personas) == 1 else ""
+    analysis = step_scan_and_analyze(cfg, use_drive, client, persona_name=scan_persona)
 
     # Research-Ergebnis abholen (ist meist schon fertig)
     insights = research_future.result()
