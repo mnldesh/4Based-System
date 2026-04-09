@@ -3,7 +3,7 @@ ai_client.py — Multi-Modell-Client mit zentralem Routing
 
 Öffentliche API:
   chat(system, user, purpose="chat", max_tokens=500)
-    purpose="chat" → Claude 3.5 Sonnet (Live-Dialoge, Bindung-first)
+    purpose="chat" → Claude Sonnet 4   (Live-Dialoge, Bindung-first)
     purpose="plan" → Claude Opus 4     (Planung, Strategie — komplex & stark)
 
   vision(image_path, prompt, ...)  → llava:7b via Ollama (Bildanalyse)
@@ -38,7 +38,7 @@ except ImportError:
 from shared.config import ROOT
 
 # ─── Modell-Konstanten ────────────────────────────────────────────────────────
-CLAUDE_MODEL    = "claude-3-5-sonnet-20241022"        # Chat-LLM: Live-Dialoge, Bindung-first
+CHAT_MODEL      = "claude-sonnet-4-20250514"          # Chat-LLM: Live-Dialoge, Bindung-first
 PLAN_MODEL      = "claude-opus-4-20250514"            # Plan-LLM: Strategie, komplex & stark
 TEXT_MODEL      = "qwen2.5:latest"                    # Ollama-Fallback: Chat
 VISION_MODEL    = "llava:7b"                          # Lokal: Bildanalyse
@@ -180,7 +180,7 @@ def chat(
     """
     Zentraler Chat-Einstiegspunkt mit automatischem Modell-Routing.
 
-    purpose="chat" → Claude 3.5 Sonnet primär, qwen2.5 als Notfall-Fallback
+    purpose="chat" → Claude Sonnet 4 primär, qwen2.5 als Notfall-Fallback
     purpose="plan" → Claude Opus 4 primär (komplex, Strategie), qwen2.5 als Fallback
     """
     if purpose == "plan":
@@ -194,7 +194,7 @@ def _chat_claude(
     system:     str,
     user:       str,
     max_tokens: int = 500,
-    model:      str = CLAUDE_MODEL,
+    model:      str = CHAT_MODEL,
 ) -> str:
     """Claude API mit Ollama-Fallback. Bei 500: 1 kurzer Retry, dann Fallback."""
     if not user:
