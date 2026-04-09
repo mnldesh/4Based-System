@@ -52,6 +52,8 @@ pip install --upgrade pip -q
 
 pip install -q \
     openai \
+    anthropic \
+    python-dotenv \
     playwright \
     ddgs \
     google-api-python-client \
@@ -102,24 +104,26 @@ fi
 
 # ─── 6. Ollama Modelle ────────────────────────────────────────────────────────
 step "6. Ollama Modelle"
-warn "qwen3:14b ≈ 9.3 GB | llava:7b ≈ 4.7 GB — Download kann dauern!"
+warn "qwen2.5:latest ≈ 4.7 GB | llava:7b ≈ 4.7 GB — Download kann dauern!"
 
 if curl -s http://127.0.0.1:11434/api/tags &>/dev/null; then
-    if ! ollama list 2>/dev/null | grep -q "qwen3:14b"; then
-        info "qwen3:14b herunterladen..."
-        ollama pull qwen3:14b && ok "qwen3:14b installiert"
+    if ! ollama list 2>/dev/null | grep -q "qwen2.5:latest"; then
+        info "qwen2.5:latest herunterladen (Chat-Fallback + Planung)..."
+        ollama pull qwen2.5:latest && ok "qwen2.5:latest installiert"
     else
-        ok "qwen3:14b bereits vorhanden"
+        ok "qwen2.5:latest bereits vorhanden"
     fi
 
     if ! ollama list 2>/dev/null | grep -q "llava:7b"; then
-        info "llava:7b herunterladen..."
+        info "llava:7b herunterladen (Video/Bild-Analyse)..."
         ollama pull llava:7b && ok "llava:7b installiert"
     else
         ok "llava:7b bereits vorhanden"
     fi
 else
-    warn "Ollama nicht erreichbar — Modelle übersprungen. Später manuell: ollama pull qwen3:14b && ollama pull llava:7b"
+    warn "Ollama nicht erreichbar — Modelle übersprungen. Später manuell:"
+    warn "  ollama pull qwen2.5:latest"
+    warn "  ollama pull llava:7b"
 fi
 
 # ─── 7. Ordnerstruktur ────────────────────────────────────────────────────────
@@ -150,7 +154,9 @@ fi
 
 # ─── 8. Startscripte ausführbar machen ────────────────────────────────────────
 step "8. Startscripte"
-chmod +x start.sh 2>/dev/null && ok "start.sh ausführbar" || true
+for SCRIPT in start.sh start-hilda.sh start-tia.sh start-hilda-planner.sh start-tia-planner.sh start-all.sh; do
+    chmod +x "$SCRIPT" 2>/dev/null && ok "$SCRIPT ausführbar" || warn "$SCRIPT nicht gefunden"
+done
 
 # ─── 9. Config erstellen falls nicht vorhanden ────────────────────────────────
 step "9. Konfiguration"
@@ -174,6 +180,17 @@ else
     ok "config/orchestrator.json bereits vorhanden"
 fi
 
+if [ ! -f ".env" ]; then
+    cat > .env << 'ENVFILE'
+# Anthropic API Key — hier eintragen
+# Erhältlich unter: https://console.anthropic.com/
+ANTHROPIC_API_KEY=sk-ant-...
+ENVFILE
+    ok ".env Vorlage erstellt — ANTHROPIC_API_KEY eintragen!"
+else
+    ok ".env bereits vorhanden"
+fi
+
 if [ ! -f "config/blacklist.json" ]; then
     echo '["4Based"]' > config/blacklist.json
     ok "config/blacklist.json erstellt (enthält: 4Based)"
@@ -186,7 +203,7 @@ step "10. Installations-Check"
 ERRORS=0
 
 # Python-Imports testen
-python -c "import openai; import playwright; print('  openai + playwright: OK')" || { warn "openai/playwright Import fehlgeschlagen"; ERRORS=$((ERRORS+1)); }
+python -c "import openai; import anthropic; import playwright; print('  openai + anthropic + playwright: OK')" || { warn "openai/anthropic/playwright Import fehlgeschlagen"; ERRORS=$((ERRORS+1)); }
 python -c "import sys; sys.path.insert(0, 'scripts'); from shared.personas import PERSONAS; print('  personas: OK')" || { warn "personas Import fehlgeschlagen"; ERRORS=$((ERRORS+1)); }
 python -c "import sys; sys.path.insert(0, 'scripts'); from shared.ai_client import make_client; print('  ai_client: OK')" || { warn "ai_client Import fehlgeschlagen"; ERRORS=$((ERRORS+1)); }
 python -c "import sys; sys.path.insert(0, 'scripts'); from shared.base_runner import load_account; print('  base_runner: OK')" || { warn "base_runner Import fehlgeschlagen"; ERRORS=$((ERRORS+1)); }
@@ -209,23 +226,33 @@ echo "╚═══════════════════════�
 echo ""
 echo "NÄCHSTE SCHRITTE:"
 echo ""
-echo "  1. Sessions speichern (einmalig):"
-echo "     ./start.sh hilda --save-session"
-echo "     ./start.sh tia   --save-session"
+echo "  0. API Key eintragen:"
+echo "     nano .env   →   ANTHROPIC_API_KEY=sk-ant-..."
 echo ""
-echo "  2. Testen (ohne Nachrichten zu senden):"
-echo "     ./start.sh hilda --dry-run --once"
-echo "     ./start.sh tia   --dry-run --once"
+echo "  1. Sessions speichern (einmalig, Browser öffnet sich):"
+echo "     ./start-hilda.sh --save-session"
+echo "     ./start-tia.sh   --save-session"
 echo ""
-echo "  3. Produktiv starten:"
-echo "     ./start.sh hilda --headless"
-echo "     ./start.sh tia   --headless"
+echo "  2. Testen (kein Versand):"
+echo "     ./start-hilda.sh --dry-run --once"
+echo "     ./start-tia.sh   --dry-run --once"
 echo ""
-echo "  4. Planer (Pläne → /mnt/Arbeit/Planung):"
-echo "     .venv/bin/python scripts/plan.py --persona hilda --dry-run"
-echo "     .venv/bin/python scripts/plan.py --persona tia   --dry-run"
+echo "  3. Einzeln produktiv starten:"
+echo "     ./start-hilda.sh --headless"
+echo "     ./start-tia.sh   --headless"
 echo ""
-echo "  5. Referenz-Docs eintragen:"
-echo "     references/hilda-bot/  → SOUL.md, hilda-system.md, PLAYBOOK.md, MEMORY.md"
-echo "     references/tia-bot/    → SOUL.md, tia-system.md,   PLAYBOOK.md, MEMORY.md"
+echo "  4. Beide gleichzeitig starten:"
+echo "     ./start-all.sh"
+echo "     (Logs: logs/hilda.log | logs/tia.log)"
+echo ""
+echo "  5. Content-Planer:"
+echo "     ./start-hilda-planner.sh          # Tagesplan für Hilda"
+echo "     ./start-tia-planner.sh            # Tagesplan für Tia"
+echo "     ./start-hilda-planner.sh --dry-run  # Nur testen"
+echo ""
+echo "  6. Modell-Übersicht:"
+echo "     Chat:         Claude API (claude-sonnet-4-6)"
+echo "     Chat-Fallback: qwen2.5:latest"
+echo "     Planung/Captions: qwen2.5:latest"
+echo "     Videoanalyse: llava:7b"
 echo ""

@@ -1,14 +1,19 @@
 """
-ai_client.py — Ollama / OpenAI-kompatibler Client
+ai_client.py — Multi-Modell-Client mit zentralem Routing
 
-Optimierungen:
-  - Regex auf Modulebene kompiliert (statt bei jedem Call)
-  - Globaler gecachter Client (statt new-Instanz pro Call)
-  - Timeout auf alle API-Calls
-  - Retry mit exponential Backoff bei transienten Fehlern
+Öffentliche API:
+  chat(system, user, purpose="chat", max_tokens=500)
+    purpose="chat" → Claude 3.5 Sonnet (Live-Dialoge, Bindung-first)
+    purpose="plan" → Claude 3 Opus     (Planung, Strategie — komplex & stark)
+
+  vision(image_path, prompt, ...)  → llava:7b via Ollama (Bildanalyse)
+
+Aufrufer müssen keine Modellnamen oder Client-Typen kennen.
 """
 
+import os
 import re
+import sys
 import subprocess
 import time
 import base64
@@ -16,26 +21,39 @@ import functools
 from pathlib import Path
 from typing import Optional
 from urllib.request import urlopen
-from urllib.error import URLError
+
+# Sicherstellen dass scripts/ im Suchpfad ist (auch bei direktem Aufruf)
+_SCRIPTS = Path(__file__).resolve().parent.parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
 
 import openai
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+except ImportError:
+    pass  # python-dotenv nicht installiert — ANTHROPIC_API_KEY muss als Umgebungsvariable gesetzt sein
+
 from shared.config import ROOT
+
+# ─── Modell-Konstanten ────────────────────────────────────────────────────────
+CLAUDE_MODEL    = "claude-3-5-sonnet-20241022"        # Chat-LLM: Live-Dialoge, Bindung-first
+PLAN_MODEL      = "claude-3-opus-20240229"            # Plan-LLM: Strategie, komplex & stark
+TEXT_MODEL      = "qwen2.5:latest"                    # Ollama-Fallback: Chat
+VISION_MODEL    = "llava:7b"                          # Lokal: Bildanalyse
+
 OLLAMA_BASE     = "http://127.0.0.1:11434/v1"
 OLLAMA_HEALTH   = "http://127.0.0.1:11434/api/tags"
-TEXT_MODEL      = "qwen3:14b"
-VISION_MODEL    = "llava:7b"
-API_TIMEOUT     = 180   # qwen3:14b braucht bei Queue länger
+API_TIMEOUT     = 180
 MAX_RETRIES     = 3
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 
+# ─── Ollama starten ───────────────────────────────────────────────────────────
+
 def ensure_ollama(wait: int = 30) -> None:
-    """
-    Prüft ob Ollama läuft. Startet es automatisch wenn nicht.
-    Wartet bis zu `wait` Sekunden auf den Start.
-    Beendet das Programm wenn Ollama nicht gestartet werden kann.
-    """
+    """Prüft ob Ollama läuft. Startet es automatisch wenn nicht."""
     def _is_up() -> bool:
         try:
             urlopen(OLLAMA_HEALTH, timeout=3)
@@ -67,29 +85,52 @@ def ensure_ollama(wait: int = 30) -> None:
 
     raise SystemExit(f"[OLLAMA] Konnte nach {wait}s nicht gestartet werden. Manuell prüfen: ollama serve")
 
-# ─── Regex — einmal kompiliert ────────────────────────────────────────────────
-_RE_THINK    = re.compile(r"<think>.*?</think>", re.DOTALL)
-_RE_BOLD     = re.compile(r"\*\*(.+?)\*\*")
-_RE_SPEAKER  = re.compile(r"(?m)^[\w][\w ]{0,20}:\s*")
-_RE_CODE     = re.compile(r"```(?:json)?")
-_RE_NON_LATIN = re.compile(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef\u3400-\u4dbf\u2e80-\u2eff\u1100-\u11ff\uac00-\ud7af]")
-_RE_GARBLED  = re.compile(r"[a-zäöüß]{15,}", re.IGNORECASE)  # Wortmonster wie "drauffrageuzubereiten"
 
-# ─── Globaler Client-Cache ────────────────────────────────────────────────────
-_client: Optional[openai.OpenAI] = None
+# ─── Regex — einmal kompiliert ────────────────────────────────────────────────
+_RE_THINK     = re.compile(r"<think>.*?</think>", re.DOTALL)
+_RE_BOLD      = re.compile(r"\*\*(.+?)\*\*")
+_RE_SPEAKER   = re.compile(r"(?m)^[\w][\w ]{0,20}:\s*")
+_RE_CODE      = re.compile(r"```(?:json)?")
+_RE_NON_LATIN = re.compile(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef\u3400-\u4dbf\u2e80-\u2eff\u1100-\u11ff\uac00-\ud7af]")
+_RE_GARBLED   = re.compile(r"[a-zäöüß]{15,}", re.IGNORECASE)
+
+
+# ─── Ollama Client (für Vision + Planung + Fallback) ─────────────────────────
+_ollama_client: Optional[openai.OpenAI] = None
 
 def make_client() -> openai.OpenAI:
-    """Gibt immer denselben Client zurück (lazy init)."""
-    global _client
-    if _client is None:
-        _client = openai.OpenAI(
+    """Gibt immer denselben Ollama-Client zurück (lazy init)."""
+    global _ollama_client
+    if _ollama_client is None:
+        _ollama_client = openai.OpenAI(
             base_url=OLLAMA_BASE,
             api_key="ollama",
             timeout=API_TIMEOUT,
         )
-    return _client
+    return _ollama_client
 
-# ─── Retry-Decorator ──────────────────────────────────────────────────────────
+
+# ─── Claude Client (für Chat/Nachrichten) ─────────────────────────────────────
+_claude_client = None
+
+def make_claude_client():
+    """Gibt Anthropic-Client zurück. None wenn API Key fehlt oder Paket nicht installiert."""
+    global _claude_client
+    if _claude_client is None:
+        try:
+            import anthropic
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                print("[CLAUDE] ANTHROPIC_API_KEY nicht gesetzt — Fallback auf Ollama")
+                return None
+            _claude_client = anthropic.Anthropic(api_key=api_key, timeout=60.0)
+        except ImportError:
+            print("[CLAUDE] 'anthropic' Paket nicht installiert — Fallback auf Ollama")
+            return None
+    return _claude_client
+
+
+# ─── Retry-Decorator (für Ollama) ─────────────────────────────────────────────
 
 def _with_retry(fn):
     """Decorator: wiederholt bei transienten Fehlern mit exp. Backoff."""
@@ -127,17 +168,90 @@ def _with_retry(fn):
         return ""
     return wrapper
 
-# ─── API-Calls ────────────────────────────────────────────────────────────────
+
+# ─── Öffentlicher Einstiegspunkt: Routing nach purpose ───────────────────────
+
+def chat(
+    system:     str,
+    user:       str,
+    purpose:    str = "chat",
+    max_tokens: int = 500,
+) -> str:
+    """
+    Zentraler Chat-Einstiegspunkt mit automatischem Modell-Routing.
+
+    purpose="chat" → Claude 3.5 Sonnet primär, qwen2.5 als Notfall-Fallback
+    purpose="plan" → Claude 3 Opus primär (komplex, Strategie), qwen2.5 als Fallback
+    """
+    if purpose == "plan":
+        return _chat_claude(system, user, max_tokens=max_tokens, model=PLAN_MODEL)
+    return _chat_claude(system, user, max_tokens=max_tokens)
+
+
+# ─── Interne Implementierungen ────────────────────────────────────────────────
+
+def _chat_claude(
+    system:     str,
+    user:       str,
+    max_tokens: int = 500,
+    model:      str = CLAUDE_MODEL,
+) -> str:
+    """Claude API mit Ollama-Fallback. Bei 500: 1 kurzer Retry, dann Fallback."""
+    if not user:
+        return ""
+
+    claude = make_claude_client()
+    if claude:
+        kwargs: dict = dict(
+            model      = model,
+            max_tokens = max_tokens,
+            messages   = [{"role": "user", "content": user}],
+        )
+        if system:
+            kwargs["system"] = system
+
+        for attempt in range(2):  # max. 1 Retry bei 500
+            try:
+                msg  = claude.messages.create(**kwargs)
+                text = msg.content[0].text.strip() if msg.content else ""
+                if text:
+                    return text
+            except Exception as e:
+                status = getattr(e, "status_code", None)
+                if status == 500:
+                    print(f"[CLAUDE] 500 Internal Server Error")
+                    if attempt == 0:
+                        time.sleep(1)
+                        continue          # 1 Retry
+                else:
+                    print(f"[CLAUDE] Fehler — Fallback auf Ollama: {e}")
+                break                     # kein weiterer Versuch
+
+    print(f"[CLAUDE→OLLAMA] Fallback auf {TEXT_MODEL}")
+    return _chat_ollama_raw(system, user, max_tokens=max_tokens, model=TEXT_MODEL)
+
+
+def _chat_ollama(
+    system:     str,
+    user:       str,
+    max_tokens: int = 500,
+    model:      str = TEXT_MODEL,
+) -> str:
+    """Ollama-Chat (Fallback)."""
+    return _chat_ollama_raw(system, user, max_tokens=max_tokens, model=model)
+
+
+# ─── Ollama-Raw-Call (mit Retry) ──────────────────────────────────────────────
 
 @_with_retry
-def chat(
+def _chat_ollama_raw(
     system:     str,
     user:       str,
     client:     Optional[openai.OpenAI] = None,
     max_tokens: int = 500,
     model:      str = TEXT_MODEL,
 ) -> str:
-    """Text-Chat. Gibt leeren String bei dauerhaftem Fehler zurück."""
+    """Rohaufruf gegen Ollama OpenAI-kompatible API. Intern — nicht direkt aufrufen."""
     if not system or not user:
         return ""
     c    = client or make_client()
@@ -151,6 +265,8 @@ def chat(
     )
     return resp.choices[0].message.content.strip()
 
+
+# ─── Vision: Ollama llava:7b ──────────────────────────────────────────────────
 
 @_with_retry
 def vision(
@@ -192,6 +308,8 @@ def vision(
     return resp.choices[0].message.content.strip()
 
 
+# ─── Hilfsfunktionen ──────────────────────────────────────────────────────────
+
 def parse_json_from_response(raw: str) -> Optional[dict]:
     """Extrahiert JSON sicher via JSONDecoder.raw_decode(), repariert truncated JSON."""
     import json
@@ -208,7 +326,6 @@ def parse_json_from_response(raw: str) -> Optional[dict]:
             return None
 
     def _repair_and_parse(s: str) -> Optional[dict]:
-        """Offene geschweifte Klammern schließen und nochmal versuchen."""
         open_b = s.count('{') - s.count('}')
         if open_b > 0:
             repaired = s + '}' * open_b
@@ -220,12 +337,10 @@ def parse_json_from_response(raw: str) -> Optional[dict]:
         result = _try_parse(text, start)
         if result is not None:
             return result
-        # Truncated JSON reparieren
         result = _repair_and_parse(text[start:])
         if result is not None:
             return result
 
-    # Fallback: Markdown-Code-Block entfernen
     cleaned = _RE_CODE.sub("", text).strip()
     start   = cleaned.find("{")
     if start != -1:
@@ -247,23 +362,34 @@ def clean_reply(text: str) -> str:
     text = text.strip()
     lines = [l.strip() for l in text.split("\n") if l.strip()]
     text = lines[0] if lines else text
-    # Chinesisch/CJK/Koreanisch abschneiden — qwen3 leakt manchmal
     if _RE_NON_LATIN.search(text):
-        # Alles ab dem ersten Fremdzeichen abschneiden
-        idx = _RE_NON_LATIN.search(text).start()
+        idx  = _RE_NON_LATIN.search(text).start()
         text = text[:idx].rstrip()
-    # Wortmonster entfernen (>15 Buchstaben ohne Leerzeichen = Tokenizer-Müll)
     if _RE_GARBLED.search(text):
         text = _RE_GARBLED.sub("", text).strip()
-        # Doppelte Leerzeichen aufräumen
         text = re.sub(r"  +", " ", text)
     return text
 
 
 def is_reply_usable(text: str) -> bool:
-    """Prüft ob eine bereinigte Antwort brauchbar ist (nicht leer, nicht zu kurz)."""
+    """Prüft ob eine bereinigte Antwort brauchbar ist."""
     if not text or len(text) < 10:
         return False
-    # Nur Emojis/Satzzeichen übrig?
     alpha = sum(1 for c in text if c.isalpha())
     return alpha >= 5
+
+
+# ─── Lokaler Test ─────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    ensure_ollama()
+
+    print("\n=== Chat-Route (Claude primär) ===")
+    r = chat("Du bist ein Assistent.", "Sag 'Hallo' auf Deutsch.", purpose="chat", max_tokens=20)
+    print(f"  → {r or '[LEER]'}")
+
+    print("\n=== Plan-Route (qwen2.5) ===")
+    r = chat("Du bist ein Texter.", "Schreib eine kurze Caption.", purpose="plan", max_tokens=50)
+    print(f"  → {r or '[LEER]'}")
+
+    print("\n✓ Fertig")

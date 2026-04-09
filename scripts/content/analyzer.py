@@ -330,7 +330,7 @@ def analyze_video(path: Path, client=None) -> Optional[ContentScore]:
         frames_json = frames_json,
     )
 
-    raw  = chat(system=VIDEO_SUMMARY_SYSTEM, user=prompt, client=c, max_tokens=600)
+    raw  = chat(system=VIDEO_SUMMARY_SYSTEM, user=prompt, purpose="plan", max_tokens=600)
     data = parse_json_from_response(raw) if raw else None
 
     if not data:

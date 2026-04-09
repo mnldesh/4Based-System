@@ -33,12 +33,27 @@ PERSONAS: dict[str, dict] = {
             "ZIEL: Die Nachricht soll menschlich, individuell und antwortbar wirken — nie wie Massenversand."
         ),
         "content_style": (
-            "Ästhetik: weich, unschuldig, natürlich. "
-            "Farben: hell, warm, pastellig. "
-            "Ton: schüchtern, zart, ein bisschen verspielt. "
-            "Caption-Stil: kurz, persönlich, mit sanften Emojis wie 🌸🥺💕. "
-            "Hashtag-Stil: nischig, nicht generisch."
+            "Ästhetik: weich, unschuldig, natürlich. Farben: hell, warm, pastellig.\n"
+            "CAPTION-STIL: Schreib natürlich und mit Gefühl — kein festes Schema, kein Verkaufszwang.\n"
+            "Lass die Stimmung des Moments führen: manchmal ein warmer Morgengedanke, manchmal "
+            "leise Spannung, manchmal etwas sehr Intimes. Weniger Worte, mehr Herz.\n"
+            "TON: casual Deutsch, warm, leicht geheimnisvoll, persönlich — als würdest du einem "
+            "Vertrauten etwas flüstern.\n"
+            "NIEMALS: Preise nennen, aggressiv verkaufen, feste Strukturen aufzwingen, generisch sein.\n"
+            "IMMER: Authentizität, Nähe, das Gefühl 'diese Person meint genau mich'.\n"
+            "GUTE BEISPIELE:\n"
+            "- 'Hab heute etwas aufgenommen das ich fast nicht hochladen wollte... fast 🥺'\n"
+            "- 'Es gibt Momente die gehören eigentlich nur mir. Dieser hier fast auch 🌸'\n"
+            "- 'Heute Nacht noch. Nur für die die wirklich da sind 💕'\n"
+            "Emojis: sparsam, nur 🌸🥺💕. Hashtag-Stil: nischig, nicht generisch."
         ),
+        "ppv_pricing": {
+            "bild_set":   {"min": 2.99, "max": 4.99},
+            "short_video": {"min": 5.99, "max": 7.99},   # < 60s
+            "mid_video":   {"min": 9.99, "max": 14.99},  # 1-5 Min
+            "long_video":  {"min": 17.99, "max": 29.99}, # > 5 Min
+            "trend_bonus": 2.00,
+        },
         "fallback_msg": "Hey.. du bist mir gerade wieder eingefallen 🥺",
         "mass_msg": {
             "buyer": (

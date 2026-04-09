@@ -27,7 +27,7 @@ try:
 except ImportError:
     from duckduckgo_search import DDGS
 
-from shared.ai_client import make_client, chat, parse_json_from_response
+from shared.ai_client import chat, parse_json_from_response
 from shared.personas import PERSONAS
 from shared.config import ROOT
 
@@ -177,31 +177,30 @@ def build_snippets_text(results: list[ResearchResult]) -> str:
     return "\n".join(lines)
 
 
-def _persona_strategy(persona_name: str, summary: str, client) -> str:
+def _persona_strategy(persona_name: str, summary: str) -> str:
     p = PERSONAS[persona_name]
     result = chat(
-        system = PERSONA_SYSTEM,
-        user   = (
+        system     = PERSONA_SYSTEM,
+        user       = (
             f"Persona: {p['name']}, {p['age']}J., Stil: {p['style']}\n"
             f"Platform: {p['platform']}, Gutschein: {p['voucher_pct']}%\n\n"
             f"Marketing Insights:\n{summary}\n\n"
             f"Erstelle einen konkreten Aktionsplan für {p['name']}:"
         ),
-        client     = client,
+        purpose    = "plan",
         max_tokens = 500,
     )
     return result or f"Kein Aktionsplan für {p['name']} verfügbar."
 
 
-def analyze_results(results: list[ResearchResult], client=None) -> MarketingInsights:
-    c        = client or make_client()
+def analyze_results(results: list[ResearchResult]) -> MarketingInsights:
     snippets = build_snippets_text(results)
 
     print("[RESEARCHER] Erstelle Zusammenfassung...")
     summary = chat(
         system     = SUMMARY_SYSTEM,
         user       = f"Suchergebnisse:\n\n{snippets}\n\nFasse die wichtigsten Marketing-Strategien zusammen:",
-        client     = c,
+        purpose    = "plan",
         max_tokens = 800,
     )
     if not summary:
@@ -210,12 +209,12 @@ def analyze_results(results: list[ResearchResult], client=None) -> MarketingInsi
     # Alle 6 Analysen parallel (alle hängen nur von summary ab)
     print("[RESEARCHER] Erstelle Strategien + Analysen parallel (6 Calls)...")
     with ThreadPoolExecutor(max_workers=6) as ex:
-        f_hilda     = ex.submit(_persona_strategy, "hilda", summary, c)
-        f_tia       = ex.submit(_persona_strategy, "tia",   summary, c)
-        f_tips      = ex.submit(chat, TIPS_SYSTEM,      summary, c, 400)
-        f_ppv       = ex.submit(chat, PPV_SYSTEM,        summary, c, 400)
-        f_dm        = ex.submit(chat, DM_SYSTEM,         summary, c, 400)
-        f_retention = ex.submit(chat, RETENTION_SYSTEM,  summary, c, 400)
+        f_hilda     = ex.submit(_persona_strategy, "hilda", summary)
+        f_tia       = ex.submit(_persona_strategy, "tia",   summary)
+        f_tips      = ex.submit(chat, TIPS_SYSTEM,     summary, "plan", 400)
+        f_ppv       = ex.submit(chat, PPV_SYSTEM,      summary, "plan", 400)
+        f_dm        = ex.submit(chat, DM_SYSTEM,       summary, "plan", 400)
+        f_retention = ex.submit(chat, RETENTION_SYSTEM, summary, "plan", 400)
 
     hilda_strat  = f_hilda.result()
     tia_strat    = f_tia.result()

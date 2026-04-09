@@ -47,7 +47,7 @@ from content.analyzer   import (
 )
 from content.researcher import run_research, load_insights
 from content.planner    import (
-    create_day_plan, save_plan, load_plan,
+    create_day_plan, save_plan, save_mass_messages, load_plan,
     plan_to_readable_text, print_plan, DayPlan,
 )
 from drive.manager      import (
@@ -71,9 +71,9 @@ def load_config() -> dict:
         "drive_source_folder_id": "",
         "drive_output_folder_id": "",
         "min_content_score":      6,
-        "posts_per_day":          11,
-        "mass_msg_count":         4,
-        "paid_every":             5,
+        "posts_per_day":          12,
+        "mass_msg_count":         5,
+        "max_paid_posts":         3,
         "personas":               ["hilda", "tia"],
         "research_every_days":    3,
     }
@@ -215,15 +215,19 @@ def step_plan(
     client = client or make_client()
 
     for persona in personas:
-        day_folder = PLANS_ROOT / persona.capitalize() / f"{today}_{day}"
+        persona_root = PLANS_ROOT / persona.capitalize()
+        day_folder   = persona_root / "Plan für die nächsten Tage" / f"{today}_{day}"
         day_folder.mkdir(parents=True, exist_ok=True)
 
         out_json = day_folder / f"plan_{persona}_{today}.json"
         out_txt  = day_folder / f"plan_{persona}_{today}.txt"
 
         if out_json.exists():
-            print(f"[STEP 4] Plan für {persona} vorhanden: {day_folder.name}")
-            plans[persona] = load_plan(out_json)
+            print(f"[STEP 4] Plan für {persona} vorhanden: {out_json.name}")
+            loaded = load_plan(out_json)
+            plans[persona] = loaded
+            if loaded:
+                save_mass_messages(loaded, persona_root)
             continue
 
         if not analysis:
@@ -234,14 +238,15 @@ def step_plan(
             persona_name   = persona,
             content        = analysis,
             insights       = insights,
-            posts_per_day  = cfg.get("posts_per_day",  11),
-            mass_msg_count = cfg.get("mass_msg_count",  4),
-            paid_every     = cfg.get("paid_every",       5),
+            posts_per_day  = cfg.get("posts_per_day",   12),
+            mass_msg_count = cfg.get("mass_msg_count",   5),
+            max_paid_posts = cfg.get("max_paid_posts",   3),
             client         = client,
         )
         save_plan(plan, out_json)
         out_txt.write_text(plan_to_readable_text(plan), encoding="utf-8")
-        print(f"[STEP 4] Gespeichert: {day_folder.relative_to(ROOT)}/")
+        save_mass_messages(plan, persona_root)
+        print(f"[STEP 4] Gespeichert: {persona_root.name}/Plan für die nächsten Tage/{day_folder.name}/")
         plans[persona] = plan
 
     return plans
@@ -360,7 +365,8 @@ def main() -> None:
     _executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1)
     research_future: Future = _executor.submit(step_research, cfg, args.skip_research)
 
-    analysis = step_scan_and_analyze(cfg, use_drive, client)
+    scan_persona = personas[0] if len(personas) == 1 else ""
+    analysis = step_scan_and_analyze(cfg, use_drive, client, persona_name=scan_persona)
 
     # Research-Ergebnis abholen (ist meist schon fertig)
     insights = research_future.result()
