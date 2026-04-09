@@ -39,8 +39,7 @@ from shared.config import ROOT
 
 # ─── Modell-Konstanten ────────────────────────────────────────────────────────
 CLAUDE_MODEL    = "claude-3-5-sonnet-20241022"        # Chat-LLM: Live-Dialoge, Bindung-first
-OPUS_4_MODEL    = "claude-opus-4-20250514"            # Opus 4: Höchste Kapazität, Strategie
-PLAN_MODEL      = OPUS_4_MODEL                        # Plan-LLM: Strategie, komplex & stark
+PLAN_MODEL      = "claude-opus-4-20250514"            # Plan-LLM: Strategie, komplex & stark
 TEXT_MODEL      = "qwen2.5:latest"                    # Ollama-Fallback: Chat
 VISION_MODEL    = "llava:7b"                          # Lokal: Bildanalyse
 
